@@ -1,0 +1,30 @@
+{
+  "name": "@tkxel-vault/api-server",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "REST API Server for tkxel Vault web app",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tkxel-vault/types": "workspace:*",
+    "@tkxel-vault/vault-core": "workspace:*",
+    "@types/pg": "^8.23.1",
+    "cors": "^2.8.5",
+    "drizzle-orm": "^0.39.3",
+    "express": "^4.19.2",
+    "google-auth-library": "^11.0.2",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.1",
+    "typescript": "^5.7.3"
+  }
+}

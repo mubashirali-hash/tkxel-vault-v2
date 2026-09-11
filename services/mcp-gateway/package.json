@@ -1,0 +1,30 @@
+{
+  "name": "@tkxel-vault/mcp-gateway",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Remote Model Context Protocol (MCP 2025-11-25) Gateway for tkxel Vault",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/start.ts",
+    "start": "node dist/start.js",
+    "start:stdio": "node dist/stdio.js",
+    "test": "node --test test/**/*.test.js",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@tkxel-vault/types": "workspace:*",
+    "@tkxel-vault/vault-core": "workspace:*",
+    "drizzle-orm": "^0.39.3",
+    "google-auth-library": "^11.0.2",
+    "ioredis": "^5.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.23.13",
+    "typescript": "^5.7.3"
+  }
+}

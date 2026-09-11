@@ -1,0 +1,24 @@
+{
+  "name": "tkxel-vault",
+  "version": "0.1.0",
+  "private": true,
+  "description": "tkxel Vault: Enterprise Context Hub & Zero-Read Locked Skills Store",
+  "packageManager": "pnpm@11.22.0",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "clean": "turbo run clean",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "pg": "^8.13.3",
+    "turbo": "^2.4.4",
+    "typescript": "^5.7.3"
+  }
+}
