@@ -64,3 +64,28 @@ export interface SkillDraft {
   suggestedTools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
   skillMdContent: string;
 }
+
+export interface SkillClarification {
+  question: string;
+  options?: string[];
+  field: string;
+  defaultAnswer?: string;
+}
+
+export interface SkillClassification {
+  name: string;
+  description: string;
+  category: 'devops' | 'security' | 'code-review' | 'data-extraction' | 'architecture' | 'utility';
+  suggestedFolder: string;
+  runtime: 'python3' | 'nodejs' | 'bash';
+  recommendedVaultMode: 'locked' | 'open';
+  parameterSchema: Record<string, unknown>;
+  systemInstructions: string;
+  clarifications: SkillClarification[];
+}
+
+export interface AutoApplyWikiLinksResult {
+  modifiedContent: string;
+  linksApplied: Array<{ targetTitle: string; matchedText: string }>;
+  count: number;
+}

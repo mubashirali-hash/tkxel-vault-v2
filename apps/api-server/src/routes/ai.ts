@@ -1,17 +1,46 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { NotesAssistant } from '../ai/notes-assistant.js';
 
 export const aiRouter: Router = Router();
 const assistant = new NotesAssistant();
 
 /**
+ * Checks if the AI Plugin is enabled via environment variable or header override.
+ */
+export const isAiPluginEnabled = (req?: Request): boolean => {
+  if (req?.headers['x-disable-ai-plugin'] === 'true') return false;
+  return process.env.ENABLE_AI_PLUGIN !== 'false';
+};
+
+/**
+ * AI Plugin Guard Middleware:
+ * If the AI plugin is disabled, blocks AI execution and returns clean disabled response.
+ */
+aiRouter.use((req: Request, res: Response, next: NextFunction): void => {
+  if (req.path === '/status') return next();
+  if (!isAiPluginEnabled(req)) {
+    res.status(200).json({
+      success: false,
+      enabled: false,
+      message: 'AI Plugin is disabled by configuration (ENABLE_AI_PLUGIN=false). Zero AI operations executed.',
+    });
+    return;
+  }
+  next();
+});
+
+/**
  * Health & Provider status
  */
-aiRouter.get('/status', (_req: Request, res: Response): void => {
+aiRouter.get('/status', (req: Request, res: Response): void => {
+  const enabled = isAiPluginEnabled(req);
   res.json({
-    status: 'ok',
-    provider: assistant.providerName,
-    features: ['suggest-links', 'sort-and-categorize', 'ask-note', 'draft-skill'],
+    status: enabled ? 'ok' : 'disabled',
+    enabled,
+    provider: enabled ? assistant.providerName : 'Disabled (Plugin Inactive)',
+    features: enabled
+      ? ['suggest-links', 'auto-link', 'sort-and-categorize', 'skill-auto-sort', 'ask-note', 'draft-skill']
+      : [],
   });
 });
 
@@ -132,5 +161,64 @@ aiRouter.post('/draft-skill', async (req: Request, res: Response): Promise<void>
   } catch (err: any) {
     console.error('Error in /api/ai/draft-skill:', err);
     res.status(500).json({ error: err.message || 'Failed to draft skill manifest' });
+  }
+});
+
+/**
+ * POST /api/ai/auto-link
+ * Injects boundary-safe [[wiki-links]] into document text for known vault entities.
+ */
+aiRouter.post('/auto-link', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { content, availableEntities } = req.body;
+
+    if (typeof content !== 'string') {
+      res.status(400).json({ error: 'content string is required' });
+      return;
+    }
+
+    const result = assistant.autoApplyWikiLinks({
+      content,
+      availableEntities: Array.isArray(availableEntities) ? availableEntities : [],
+    });
+
+    res.json({
+      success: true,
+      ...result,
+      provider: assistant.providerName,
+    });
+  } catch (err: any) {
+    console.error('Error in /api/ai/auto-link:', err);
+    res.status(500).json({ error: err.message || 'Failed to auto-apply wiki-links' });
+  }
+});
+
+/**
+ * POST /api/ai/skill-auto-sort
+ * Analyzes raw agent prompts or skill markdown, auto-extracts parameters,
+ * recommends folder & vault mode, and provides interactive clarification questions.
+ */
+aiRouter.post('/skill-auto-sort', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { promptOrYaml, defaultName } = req.body;
+
+    if (!promptOrYaml || typeof promptOrYaml !== 'string') {
+      res.status(400).json({ error: 'promptOrYaml string is required' });
+      return;
+    }
+
+    const classification = await assistant.classifyAndSortSkill({
+      promptOrYaml,
+      defaultName,
+    });
+
+    res.json({
+      success: true,
+      classification,
+      provider: assistant.providerName,
+    });
+  } catch (err: any) {
+    console.error('Error in /api/ai/skill-auto-sort:', err);
+    res.status(500).json({ error: err.message || 'Failed to classify and sort skill' });
   }
 });

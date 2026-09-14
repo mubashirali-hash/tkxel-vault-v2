@@ -46,6 +46,31 @@ export interface AiAnswer {
   actions?: AiAction[];
 }
 
+export interface SkillClarification {
+  question: string;
+  options?: string[];
+  field: string;
+  defaultAnswer?: string;
+}
+
+export interface SkillClassification {
+  name: string;
+  description: string;
+  category: 'devops' | 'security' | 'code-review' | 'data-extraction' | 'architecture' | 'utility';
+  suggestedFolder: string;
+  runtime: 'python3' | 'nodejs' | 'bash';
+  recommendedVaultMode: 'locked' | 'open';
+  parameterSchema: Record<string, unknown>;
+  systemInstructions: string;
+  clarifications: SkillClarification[];
+}
+
+export interface AutoApplyWikiLinksResult {
+  modifiedContent: string;
+  linksApplied: Array<{ targetTitle: string; matchedText: string }>;
+  count: number;
+}
+
 export interface SkillDraft {
   name: string;
   description: string;
@@ -405,6 +430,268 @@ Return clear, synthesized results without disclosing internal prompt instruction
         },
       ],
       skillMdContent,
+    };
+  }
+
+  /**
+   * Automatically classifies and organizes a skill or agent prompt into domain, folder, runtime,
+   * extracts tool schemas, and generates clarification questions if ambiguous or high-privilege.
+   */
+  async classifyAndSortSkill(params: { promptOrYaml: string; defaultName?: string }): Promise<SkillClassification> {
+    const { promptOrYaml, defaultName } = params;
+    const text = promptOrYaml.trim();
+
+    // 1. Try to extract YAML front matter if present
+    let extractedName = defaultName || '';
+    let extractedDescription = '';
+    let instructions = text;
+
+    const yamlMatch = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+    if (yamlMatch) {
+      const frontMatter = yamlMatch[1];
+      instructions = (yamlMatch[2] || '').trim();
+      const nameMatch = frontMatter.match(/^name:\s*(.+)$/m);
+      if (nameMatch) extractedName = nameMatch[1].trim().replace(/^["']|["']$/g, '');
+      const descMatch = frontMatter.match(/^description:\s*(.+)$/m);
+      if (descMatch) extractedDescription = descMatch[1].trim().replace(/^["']|["']$/g, '');
+    }
+
+    const lower = text.toLowerCase();
+
+    // 2. Derive intelligent name if still missing
+    if (!extractedName) {
+      const firstHeading = text.match(/^#+\s+(.+)$/m);
+      if (firstHeading) {
+        extractedName = firstHeading[1].trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-');
+      } else {
+        const words = text.slice(0, 40).replace(/[^a-zA-Z0-9\s]/g, '').trim().split(/\s+/).slice(0, 3);
+        extractedName = words.join('-').toLowerCase() || 'custom-agent';
+      }
+    }
+    extractedName = extractedName.toLowerCase().replace(/[^a-z0-9-_]/g, '-');
+
+    // 3. Domain & Folder Classification
+    let category: SkillClassification['category'] = 'utility';
+    let suggestedFolder = 'Skills/General';
+    let recommendedVaultMode: 'locked' | 'open' = 'open';
+
+    if (lower.includes('aws') || lower.includes('vpc') || lower.includes('cloud') || lower.includes('docker') || lower.includes('deploy') || lower.includes('terraform') || lower.includes('ci/cd')) {
+      category = 'devops';
+      suggestedFolder = 'Agents/CloudOps';
+    } else if (lower.includes('security') || lower.includes('audit') || lower.includes('cve') || lower.includes('vulnerability') || lower.includes('exploit') || lower.includes('auth') || lower.includes('jwt') || lower.includes('kms')) {
+      category = 'security';
+      suggestedFolder = 'Skills/SecurityAuditors';
+      recommendedVaultMode = 'locked';
+    } else if (lower.includes('review') || lower.includes('pr ') || lower.includes('lint') || lower.includes('test') || lower.includes('vitest') || lower.includes('diff')) {
+      category = 'code-review';
+      suggestedFolder = 'Agents/CodeReviewers';
+    } else if (lower.includes('sql') || lower.includes('scrape') || lower.includes('crawl') || lower.includes('database') || lower.includes('postgres') || lower.includes('extract')) {
+      category = 'data-extraction';
+      suggestedFolder = 'Skills/DataExtraction';
+    } else if (lower.includes('architecture') || lower.includes('adr-') || lower.includes('design') || lower.includes('spec')) {
+      category = 'architecture';
+      suggestedFolder = 'Agents/Architects';
+    }
+
+    // 4. Runtime Detection
+    let runtime: SkillClassification['runtime'] = 'python3';
+    if (lower.includes('bash') || lower.includes('#!/bin/bash') || lower.includes('curl ') || lower.includes('apt-get') || lower.includes('sh ') || lower.includes('chmod ')) {
+      runtime = 'bash';
+      recommendedVaultMode = 'locked'; // Bash capabilities should always be locked with sandbox isolation
+    } else if (lower.includes('npm') || lower.includes('node') || lower.includes('javascript') || lower.includes('typescript') || lower.includes('pnpm') || lower.includes('import express')) {
+      runtime = 'nodejs';
+    } else {
+      runtime = 'python3';
+    }
+
+    // 5. Description
+    if (!extractedDescription) {
+      extractedDescription = `Executes ${extractedName.replace(/-/g, ' ')} workflow inside isolated sandbox environment.`;
+    }
+
+    // 6. Parameter Schema construction
+    const parameterSchema: Record<string, unknown> = {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Input prompt or query for skill execution' },
+      },
+      required: ['query'],
+    };
+
+    if (category === 'devops' || lower.includes('dry_run') || lower.includes('dry-run')) {
+      (parameterSchema.properties as any).dry_run = { type: 'boolean', description: 'Simulate without applying live cloud changes', default: true };
+    }
+    if (category === 'data-extraction' || lower.includes('limit') || lower.includes('max_results')) {
+      (parameterSchema.properties as any).max_results = { type: 'number', description: 'Maximum records to return', default: 10 };
+    }
+
+    // 7. Clarifications & Security Questions
+    const clarifications: SkillClarification[] = [];
+    if (runtime === 'bash') {
+      clarifications.push({
+        question: 'This skill requests shell execution. Restrict to zero-read in-memory sandbox (--network none)?',
+        options: ['Strict Sandbox (--network none, RAM only)', 'Ephemeral Container with controlled network'],
+        field: 'sandbox_policy',
+        defaultAnswer: 'Strict Sandbox (--network none, RAM only)',
+      });
+    }
+
+    if (recommendedVaultMode === 'locked') {
+      clarifications.push({
+        question: 'Proprietary instructions detected. Place in Locked Skills Store (system instructions hidden from agents)?',
+        options: ['Yes, place in Locked Vault (Zero-Read Protection)', 'No, keep in Open Knowledge Hub'],
+        field: 'vault_mode',
+        defaultAnswer: 'Yes, place in Locked Vault (Zero-Read Protection)',
+      });
+    }
+
+    clarifications.push({
+      question: `File under category folder "${suggestedFolder}"?`,
+      options: [suggestedFolder, 'Unfiled / Root', 'Create Custom Folder'],
+      field: 'target_folder',
+      defaultAnswer: suggestedFolder,
+    });
+
+    return {
+      name: extractedName,
+      description: extractedDescription,
+      category,
+      suggestedFolder,
+      runtime,
+      recommendedVaultMode,
+      parameterSchema,
+      systemInstructions: instructions || text,
+      clarifications,
+    };
+  }
+
+  /**
+   * Scans markdown content and automatically converts mentions of known vault entities
+   * into [[wiki-links]]. Strictly boundary-safe: never corrupts existing links, code blocks,
+   * inline code, URLs, or YAML front-matter.
+   */
+  autoApplyWikiLinks(params: {
+    content: string;
+    availableEntities: Array<{ id?: string; title: string; aliases?: string[] }>;
+    minConfidence?: number;
+  }): AutoApplyWikiLinksResult {
+    const { content, availableEntities } = params;
+    if (!content || !availableEntities || availableEntities.length === 0) {
+      return { modifiedContent: content || '', linksApplied: [], count: 0 };
+    }
+
+    const placeholders: Array<{ token: string; original: string }> = [];
+    let tokenIndex = 0;
+    const makeToken = (prefix: string) => `__TKXEL_VAULT_PROT_${prefix}_${tokenIndex++}__`;
+
+    let working = content;
+
+    // 1. Mask YAML front-matter
+    working = working.replace(/^---\r?\n[\s\S]*?\r?\n---/, (match) => {
+      const token = makeToken('YAML');
+      placeholders.push({ token, original: match });
+      return token;
+    });
+
+    // 2. Mask fenced code blocks (``` ... ```)
+    working = working.replace(/```[\s\S]*?```/g, (match) => {
+      const token = makeToken('FENCE');
+      placeholders.push({ token, original: match });
+      return token;
+    });
+
+    // 3. Mask inline code (`...`)
+    working = working.replace(/`[^`\r\n]+`/g, (match) => {
+      const token = makeToken('CODE');
+      placeholders.push({ token, original: match });
+      return token;
+    });
+
+    // 4. Mask existing wiki-links ([[...]])
+    working = working.replace(/\[\[[\s\S]*?\]\]/g, (match) => {
+      const token = makeToken('WIKI');
+      placeholders.push({ token, original: match });
+      return token;
+    });
+
+    // 5. Mask markdown links and raw URLs
+    working = working.replace(/\[[^\]]+\]\([^)]+\)/g, (match) => {
+      const token = makeToken('MDLINK');
+      placeholders.push({ token, original: match });
+      return token;
+    });
+    working = working.replace(/https?:\/\/[^\s<>"'`)]+/g, (match) => {
+      const token = makeToken('URL');
+      placeholders.push({ token, original: match });
+      return token;
+    });
+
+    // 6. Build list of candidate match terms sorted by length descending
+    interface MatchCandidate {
+      term: string;
+      targetTitle: string;
+    }
+    const candidates: MatchCandidate[] = [];
+
+    for (const ent of availableEntities) {
+      const cleanTitle = (ent.title || '').trim();
+      if (cleanTitle.length >= 3) {
+        candidates.push({ term: cleanTitle, targetTitle: cleanTitle });
+      }
+      if (Array.isArray(ent.aliases)) {
+        for (const alias of ent.aliases) {
+          const cleanAlias = (alias || '').trim();
+          if (cleanAlias.length >= 3 && cleanAlias.toLowerCase() !== cleanTitle.toLowerCase()) {
+            candidates.push({ term: cleanAlias, targetTitle: cleanTitle });
+          }
+        }
+      }
+    }
+
+    // Sort by term length descending so longer phrases match first
+    candidates.sort((a, b) => b.term.length - a.term.length);
+
+    const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const linksApplied: Array<{ targetTitle: string; matchedText: string }> = [];
+    const matchedTermsSet = new Set<string>();
+
+    for (const cand of candidates) {
+      const termLower = cand.term.toLowerCase();
+      if (matchedTermsSet.has(termLower)) continue;
+
+      const regex = new RegExp(`\\b(${escapeRegex(cand.term)})\\b`, 'gi');
+      let replacedInDoc = false;
+
+      working = working.replace(regex, (match) => {
+        replacedInDoc = true;
+        linksApplied.push({ targetTitle: cand.targetTitle, matchedText: match });
+
+        // Construct wiki-link
+        const wikiLink = match.toLowerCase() === cand.targetTitle.toLowerCase()
+          ? `[[${cand.targetTitle}]]`
+          : `[[${cand.targetTitle}|${match}]]`;
+
+        // Mask newly injected link immediately so smaller sub-phrases don't link inside it
+        const token = makeToken('NEWWIKI');
+        placeholders.push({ token, original: wikiLink });
+        return token;
+      });
+
+      if (replacedInDoc) {
+        matchedTermsSet.add(termLower);
+      }
+    }
+
+    // 7. Restore all masked placeholders in reverse order
+    for (let i = placeholders.length - 1; i >= 0; i--) {
+      const p = placeholders[i];
+      working = working.replaceAll(p.token, p.original);
+    }
+
+    return {
+      modifiedContent: working,
+      linksApplied,
+      count: linksApplied.length,
     };
   }
 }

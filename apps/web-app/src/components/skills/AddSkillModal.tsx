@@ -1,8 +1,10 @@
 import React, { useState, useRef } from 'react';
-import { Sparkles, X, ShieldCheck, Code, AlertCircle, UploadCloud, FileArchive } from 'lucide-react';
+import { Sparkles, X, ShieldCheck, Code, AlertCircle, UploadCloud, FileArchive, CheckCircle2, HelpCircle } from 'lucide-react';
 import JSZip from 'jszip';
 import YAML from 'yaml';
 import { useModalAccessibility } from '../ui/useModalAccessibility.js';
+import { NotesAiClient } from '../../features/notes-ai/ai-client.js';
+import { SkillClassification } from '../../features/notes-ai/types.js';
 
 export interface SkillItem {
   id: string;
@@ -50,9 +52,43 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [error, setError] = useState<string | null>(null);
+  const [isAiEnabled] = useState(() => NotesAiClient.isAiPluginEnabled());
+  const [isAnalyzingAi, setIsAnalyzingAi] = useState(false);
+  const [aiClassification, setAiClassification] = useState<SkillClassification | null>(null);
+  const [selectedClarifications, setSelectedClarifications] = useState<Record<string, string>>({});
   const dialogRef = useModalAccessibility<HTMLDivElement>(isOpen, onClose);
 
   if (!isOpen) return null;
+
+  const handleAiAutoSort = async () => {
+    if (!instructions.trim()) return;
+    setIsAnalyzingAi(true);
+    setError(null);
+    try {
+      const result = await NotesAiClient.classifyAndSortSkill({
+        promptOrYaml: instructions,
+        defaultName: name || undefined,
+      });
+      setAiClassification(result);
+      if (!name.trim() || name === 'custom-agent') setName(result.name);
+      if (!description.trim()) setDescription(result.description);
+      if (result.runtime === 'bash') setRuntime('Bash Shell (Restricted)');
+      else if (result.runtime === 'nodejs') setRuntime('Node.js 20 Sandboxed');
+      else setRuntime('Python 3.12 Sandboxed');
+      if (result.parameterSchema) {
+        setSchemaJson(JSON.stringify(result.parameterSchema, null, 2));
+      }
+      const defaults: Record<string, string> = {};
+      for (const c of result.clarifications) {
+        if (c.defaultAnswer) defaults[c.field] = c.defaultAnswer;
+      }
+      setSelectedClarifications(defaults);
+    } catch {
+      setError('Failed to auto-sort skill with AI.');
+    } finally {
+      setIsAnalyzingAi(false);
+    }
+  };
 
   const resetState = () => {
     setActiveTab('manual');
@@ -61,6 +97,8 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
     setError(null);
     setUploadError(null);
     setParsedSkill(null);
+    setAiClassification(null);
+    setSelectedClarifications({});
   };
 
   const handleClose = () => {
@@ -377,9 +415,34 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
 
             {/* System Instructions / Prompt */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)' }}>
-                SYSTEM INSTRUCTIONS (SKILL.md prompt):
-              </label>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)' }}>
+                  SYSTEM INSTRUCTIONS (SKILL.md prompt):
+                </label>
+                {isAiEnabled && (
+                  <button
+                    type="button"
+                    onClick={handleAiAutoSort}
+                    disabled={isAnalyzingAi || !instructions.trim()}
+                    className="btn btn-ghost"
+                    style={{
+                      padding: '2px 8px',
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      color: '#7C3AED',
+                      backgroundColor: '#F3E8FF',
+                      borderRadius: '4px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                    }}
+                    title="Let AI classify, detect parameters, select runtime, and sort into folders"
+                  >
+                    <Sparkles size={12} className={isAnalyzingAi ? 'animate-spin' : 'animate-pulse'} />
+                    {isAnalyzingAi ? 'Analyzing with AI...' : 'AI Auto-Sort & Fill'}
+                  </button>
+                )}
+              </div>
               <textarea
                 rows={3}
                 value={instructions}
@@ -394,6 +457,57 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
                   resize: 'none',
                 }}
               />
+              {aiClassification && (
+                <div
+                  style={{
+                    marginTop: '4px',
+                    padding: '10px 12px',
+                    backgroundColor: '#FAF5FF',
+                    border: '1px solid #E9D5FF',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '0.78rem',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '6px',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#6B21A8', fontWeight: 600 }}>
+                    <CheckCircle2 size={14} color="#7C3AED" />
+                    <span>AI Classified: {aiClassification.category.toUpperCase()} • Folder: {aiClassification.suggestedFolder}</span>
+                  </div>
+                  {aiClassification.clarifications.map((c, idx) => (
+                    <div key={idx} style={{ marginTop: '4px', paddingTop: '4px', borderTop: '1px dashed #E9D5FF' }}>
+                      <div style={{ color: '#4C1D95', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <HelpCircle size={12} color="#7C3AED" />
+                        <span>{c.question}</span>
+                      </div>
+                      {c.options && (
+                        <div style={{ display: 'flex', gap: '6px', marginTop: '4px', flexWrap: 'wrap' }}>
+                          {c.options.map((opt, optIdx) => (
+                            <button
+                              key={optIdx}
+                              type="button"
+                              onClick={() => setSelectedClarifications((prev) => ({ ...prev, [c.field]: opt }))}
+                              style={{
+                                padding: '2px 8px',
+                                fontSize: '0.7rem',
+                                borderRadius: '12px',
+                                border: selectedClarifications[c.field] === opt ? '1px solid #7C3AED' : '1px solid #D8B4FE',
+                                backgroundColor: selectedClarifications[c.field] === opt ? '#7C3AED' : '#FFFFFF',
+                                color: selectedClarifications[c.field] === opt ? '#FFFFFF' : '#6B21A8',
+                                cursor: 'pointer',
+                                fontWeight: 500,
+                              }}
+                            >
+                              {opt}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Schema JSON */}

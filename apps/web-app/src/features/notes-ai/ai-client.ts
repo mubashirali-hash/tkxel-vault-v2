@@ -1,15 +1,30 @@
-import { SuggestedLink, AiCategorySuggestion, SkillDraft, VaultNoteFull, AiAction } from './types.js';
+import { SuggestedLink, AiCategorySuggestion, SkillDraft, VaultNoteFull, AiAction, SkillClassification, AutoApplyWikiLinksResult } from './types.js';
 
 const API_BASE = 'http://localhost:3002/api/ai';
 
 export class NotesAiClient {
-  static async getStatus(): Promise<{ status: string; provider: string }> {
+  static isAiPluginEnabled(): boolean {
+    if (typeof window === 'undefined') return true;
+    return localStorage.getItem('tkxel_vault_ai_enabled') !== 'false';
+  }
+
+  static setAiPluginEnabled(enabled: boolean): void {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('tkxel_vault_ai_enabled', enabled ? 'true' : 'false');
+      window.dispatchEvent(new CustomEvent('tkxel-vault:ai-toggle', { detail: { enabled } }));
+    }
+  }
+
+  static async getStatus(): Promise<{ status: string; provider: string; enabled: boolean }> {
+    if (!this.isAiPluginEnabled()) {
+      return { status: 'disabled', provider: 'Disabled (Plugin Inactive)', enabled: false };
+    }
     try {
       const res = await fetch(`${API_BASE}/status`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return await res.json();
     } catch {
-      return { status: 'offline', provider: 'Offline Heuristic Engine' };
+      return { status: 'offline', provider: 'Offline Heuristic Engine', enabled: true };
     }
   }
 
@@ -91,6 +106,190 @@ export class NotesAiClient {
     } catch {
       // Local Heuristic Engine with Cross-Note Awareness and Action Intent Parsing
       return this.localHeuristicAsk(params);
+    }
+  }
+
+  static async autoApplyWikiLinks(params: {
+    content: string;
+    availableEntities: Array<{ id?: string; title: string; aliases?: string[] }>;
+  }): Promise<AutoApplyWikiLinksResult> {
+    if (!this.isAiPluginEnabled()) {
+      return { modifiedContent: params.content, linksApplied: [], count: 0 };
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/auto-link`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      return {
+        modifiedContent: data.modifiedContent || params.content,
+        linksApplied: data.linksApplied || [],
+        count: data.count || 0,
+      };
+    } catch {
+      // Client-side fallback if backend is offline
+      return this.localAutoApplyWikiLinks(params);
+    }
+  }
+
+  static localAutoApplyWikiLinks(params: {
+    content: string;
+    availableEntities: Array<{ id?: string; title: string; aliases?: string[] }>;
+  }): AutoApplyWikiLinksResult {
+    const { content, availableEntities } = params;
+    if (!content || !availableEntities || availableEntities.length === 0) {
+      return { modifiedContent: content, linksApplied: [], count: 0 };
+    }
+
+    const placeholders: Array<{ token: string; original: string }> = [];
+    let tokenIndex = 0;
+    const makeToken = (prefix: string) => `__TKXEL_VAULT_PROT_${prefix}_${tokenIndex++}__`;
+    let working = content;
+
+    // Mask code blocks, inline code, existing links, and YAML
+    working = working.replace(/^---\r?\n[\s\S]*?\r?\n---/, (m) => {
+      const token = makeToken('YAML');
+      placeholders.push({ token, original: m });
+      return token;
+    });
+    working = working.replace(/```[\s\S]*?```/g, (m) => {
+      const token = makeToken('FENCE');
+      placeholders.push({ token, original: m });
+      return token;
+    });
+    working = working.replace(/`[^`\r\n]+`/g, (m) => {
+      const token = makeToken('CODE');
+      placeholders.push({ token, original: m });
+      return token;
+    });
+    working = working.replace(/\[\[[\s\S]*?\]\]/g, (m) => {
+      const token = makeToken('WIKI');
+      placeholders.push({ token, original: m });
+      return token;
+    });
+    working = working.replace(/\[[^\]]+\]\([^)]+\)/g, (m) => {
+      const token = makeToken('MDLINK');
+      placeholders.push({ token, original: m });
+      return token;
+    });
+
+    const candidates: Array<{ term: string; targetTitle: string }> = [];
+    for (const ent of availableEntities) {
+      const title = (ent.title || '').trim();
+      if (title.length >= 3) candidates.push({ term: title, targetTitle: title });
+      if (Array.isArray(ent.aliases)) {
+        for (const al of ent.aliases) {
+          if (al && al.trim().length >= 3) candidates.push({ term: al.trim(), targetTitle: title });
+        }
+      }
+    }
+    candidates.sort((a, b) => b.term.length - a.term.length);
+
+    const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const linksApplied: Array<{ targetTitle: string; matchedText: string }> = [];
+    const matched = new Set<string>();
+
+    for (const cand of candidates) {
+      const lower = cand.term.toLowerCase();
+      if (matched.has(lower)) continue;
+
+      const regex = new RegExp(`\\b(${escapeRegex(cand.term)})\\b`, 'gi');
+      let found = false;
+      working = working.replace(regex, (m) => {
+        found = true;
+        linksApplied.push({ targetTitle: cand.targetTitle, matchedText: m });
+        const link = m.toLowerCase() === cand.targetTitle.toLowerCase()
+          ? `[[${cand.targetTitle}]]`
+          : `[[${cand.targetTitle}|${m}]]`;
+        const token = makeToken('NEWWIKI');
+        placeholders.push({ token, original: link });
+        return token;
+      });
+      if (found) matched.add(lower);
+    }
+
+    for (let i = placeholders.length - 1; i >= 0; i--) {
+      working = working.replaceAll(placeholders[i].token, placeholders[i].original);
+    }
+
+    return { modifiedContent: working, linksApplied, count: linksApplied.length };
+  }
+
+  static async classifyAndSortSkill(params: {
+    promptOrYaml: string;
+    defaultName?: string;
+  }): Promise<SkillClassification> {
+    if (!this.isAiPluginEnabled()) {
+      return {
+        name: params.defaultName || 'custom-skill',
+        description: 'Manual skill entry (AI Plugin inactive)',
+        category: 'utility',
+        suggestedFolder: 'Skills/General',
+        runtime: 'python3',
+        recommendedVaultMode: 'open',
+        parameterSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+        systemInstructions: params.promptOrYaml,
+        clarifications: [],
+      };
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/skill-auto-sort`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      return data.classification;
+    } catch {
+      // Local fallback
+      const text = params.promptOrYaml.toLowerCase();
+      const isBash = text.includes('bash') || text.includes('#!/bin/bash') || text.includes('curl ') || text.includes('chmod ');
+      const isSecurity = text.includes('security') || text.includes('audit') || text.includes('cve') || text.includes('auth');
+      const isDevOps = text.includes('aws') || text.includes('docker') || text.includes('cloud') || text.includes('deploy');
+
+      const name = params.defaultName || (text.match(/^#+\s+(.+)$/m)?.[1]?.toLowerCase().replace(/[^a-z0-9-_]/g, '-') || 'custom-agent');
+      const category = isSecurity ? 'security' : isDevOps ? 'devops' : 'utility';
+      const suggestedFolder = isSecurity ? 'Skills/SecurityAuditors' : isDevOps ? 'Agents/CloudOps' : 'Skills/General';
+      const runtime = isBash ? 'bash' : 'python3';
+      const recommendedVaultMode = (isBash || isSecurity) ? 'locked' : 'open';
+
+      return {
+        name,
+        description: `Automated agent for ${name.replace(/-/g, ' ')}.`,
+        category,
+        suggestedFolder,
+        runtime,
+        recommendedVaultMode,
+        parameterSchema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Task input for skill execution' },
+            ...(isDevOps ? { dry_run: { type: 'boolean', default: true } } : {}),
+          },
+          required: ['query'],
+        },
+        systemInstructions: params.promptOrYaml,
+        clarifications: [
+          ...(isBash ? [{
+            question: 'This skill uses shell commands. Restrict to zero-read in-memory sandbox (--network none)?',
+            options: ['Strict Sandbox (--network none, RAM only)', 'Controlled container network'],
+            field: 'sandbox_policy',
+            defaultAnswer: 'Strict Sandbox (--network none, RAM only)',
+          }] : []),
+          {
+            question: `File under recommended folder "${suggestedFolder}"?`,
+            options: [suggestedFolder, 'Unfiled / Root', 'Custom Folder'],
+            field: 'target_folder',
+            defaultAnswer: suggestedFolder,
+          }
+        ],
+      };
     }
   }
 

@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   BookOpen, Bot, Check, ChevronDown, Download, FileText, History, Lock, LogOut, Menu,
-  Network, PanelLeftClose, PanelLeftOpen, Share2, Upload, UserRound,
+  Network, PanelLeftClose, PanelLeftOpen, Share2, Upload, UserRound, Sparkles,
 } from 'lucide-react';
 import { Vault, VaultRole } from '@tkxel-vault/types';
 import { ActionMenu, Badge, Button, IconButton } from '../ui/index.js';
+import { NotesAiClient } from '../../features/notes-ai/ai-client.js';
 
 export type AppTab = 'editor' | 'graph' | 'audit';
 
@@ -37,9 +38,16 @@ export const AppShell: React.FC<AppShellProps> = ({
 }) => {
   const [vaultDropdownOpen, setVaultDropdownOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [isAiEnabled, setIsAiEnabled] = useState(() => NotesAiClient.isAiPluginEnabled());
   const vaultMenuRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const isOpenVault = currentVault.mode === 'open';
+
+  const handleToggleAi = () => {
+    const next = !isAiEnabled;
+    NotesAiClient.setAiPluginEnabled(next);
+    setIsAiEnabled(next);
+  };
 
   useEffect(() => {
     const closeMenus = (event: MouseEvent) => {
@@ -79,6 +87,12 @@ export const AppShell: React.FC<AppShellProps> = ({
     ...(isOpenVault && currentRole === 'owner'
       ? [{ id: 'export', label: 'Export vault', icon: <Download size={16} />, onSelect: onOpenExportModal }]
       : []),
+    {
+      id: 'ai-toggle',
+      label: isAiEnabled ? 'Disable AI Plugin' : 'Enable AI Plugin',
+      icon: <Sparkles size={16} color={isAiEnabled ? '#7C3AED' : undefined} />,
+      onSelect: handleToggleAi,
+    },
   ];
 
   return (
@@ -163,6 +177,30 @@ export const AppShell: React.FC<AppShellProps> = ({
         </nav>
 
         <div className="app-header__actions">
+          <button
+            type="button"
+            className={`app-ai-pill ${isAiEnabled ? 'app-ai-pill--enabled' : 'app-ai-pill--disabled'}`}
+            onClick={handleToggleAi}
+            title={isAiEnabled ? 'AI Plugin is ACTIVE. Click to disable (zero overhead).' : 'AI Plugin is DISABLED. Click to enable.'}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '4px 10px',
+              fontSize: '12px',
+              fontWeight: 500,
+              borderRadius: '9999px',
+              border: isAiEnabled ? '1px solid rgba(124, 58, 237, 0.4)' : '1px solid var(--color-border-subtle, #e2e8f0)',
+              backgroundColor: isAiEnabled ? 'rgba(124, 58, 237, 0.08)' : 'transparent',
+              color: isAiEnabled ? '#7c3aed' : 'var(--color-text-muted, #64748b)',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <Sparkles size={13} />
+            <span>{isAiEnabled ? 'AI Active' : 'AI Off'}</span>
+          </button>
+
           {overflowItems.length > 0 && <ActionMenu label="Workspace actions" items={overflowItems} compact />}
 
           <div ref={userMenuRef} className="app-user-menu">

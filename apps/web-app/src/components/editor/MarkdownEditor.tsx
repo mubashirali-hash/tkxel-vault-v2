@@ -30,6 +30,9 @@ import { NotesAiDrawer } from '../../features/notes-ai/NotesAiDrawer.js';
 import { ActionMenu, Button, Dialog } from '../ui/index.js';
 import { NoteInspector } from './NoteInspector.js';
 import { CustomCodeBlock } from './CodeBlockComponent.js';
+import { SmartLinkBanner } from './SmartLinkBanner.js';
+import { NotesAiClient } from '../../features/notes-ai/ai-client.js';
+import { SuggestedLink } from '../../features/notes-ai/types.js';
 
 export interface MarkdownEditorProps {
   page: Page;
@@ -91,6 +94,103 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   const [inspectorInitialTab, setInspectorInitialTab] = useState<'properties' | 'timeline'>('properties');
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [pendingGhostTitle, setPendingGhostTitle] = useState<string | null>(null);
+  const [isAiEnabled, setIsAiEnabled] = useState(() => NotesAiClient.isAiPluginEnabled());
+  const [smartSuggestions, setSmartSuggestions] = useState<SuggestedLink[]>([]);
+  const [isAutoLinking, setIsAutoLinking] = useState(false);
+
+  // Synchronize with global AI plugin toggle
+  useEffect(() => {
+    const handleToggle = (e: any) => {
+      const enabled = e?.detail?.enabled ?? NotesAiClient.isAiPluginEnabled();
+      setIsAiEnabled(enabled);
+      if (!enabled) {
+        setSmartSuggestions([]);
+        setIsAiDrawerOpen(false);
+      }
+    };
+    window.addEventListener('tkxel-vault:ai-toggle', handleToggle);
+    return () => window.removeEventListener('tkxel-vault:ai-toggle', handleToggle);
+  }, []);
+
+  // Proactively scan for link suggestions when AI plugin is active
+  useEffect(() => {
+    if (!isAiEnabled || !canEdit || content.trim().length < 25) {
+      setSmartSuggestions([]);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        const otherPages = availablePages.filter((p) => p.id !== page.id);
+        const suggestions = await NotesAiClient.suggestLinks({
+          activeNoteTitle: title,
+          activeNoteContent: content,
+          vaultNotes: otherPages.map((p) => ({
+            id: p.id,
+            title: p.title,
+            aliases: p.aliases,
+            tags: p.tags,
+            snippet: p.title,
+          })),
+        });
+        setSmartSuggestions(suggestions);
+      } catch {
+        setSmartSuggestions([]);
+      }
+    }, 1200);
+
+    return () => clearTimeout(timer);
+  }, [isAiEnabled, canEdit, content, title, page.id, availablePages]);
+
+  const handleAcceptSmartLink = (sug: SuggestedLink) => {
+    const res = NotesAiClient.localAutoApplyWikiLinks({
+      content,
+      availableEntities: [{ title: sug.targetTitle }],
+    });
+    if (res.count > 0 && editor && !editor.isDestroyed) {
+      editor.commands.setContent(res.modifiedContent);
+      const md = (editor.storage as any).markdown.getMarkdown();
+      setContent(md);
+      setIsDirty(true);
+    }
+    setSmartSuggestions((prev) => prev.filter((s) => s.targetTitle !== sug.targetTitle));
+  };
+
+  const handleAcceptAllSmartLinks = () => {
+    if (smartSuggestions.length === 0) return;
+    const res = NotesAiClient.localAutoApplyWikiLinks({
+      content,
+      availableEntities: smartSuggestions.map((s) => ({ title: s.targetTitle })),
+    });
+    if (res.count > 0 && editor && !editor.isDestroyed) {
+      editor.commands.setContent(res.modifiedContent);
+      const md = (editor.storage as any).markdown.getMarkdown();
+      setContent(md);
+      setIsDirty(true);
+    }
+    setSmartSuggestions([]);
+  };
+
+  const handleMagicAutoLink = async () => {
+    if (!isAiEnabled) return;
+    setIsAutoLinking(true);
+    try {
+      const otherPages = availablePages.filter((p) => p.id !== page.id);
+      const res = await NotesAiClient.autoApplyWikiLinks({
+        content,
+        availableEntities: otherPages.map((p) => ({ id: p.id, title: p.title, aliases: p.aliases })),
+      });
+      if (res.count > 0 && editor && !editor.isDestroyed) {
+        editor.commands.setContent(res.modifiedContent);
+        const md = (editor.storage as any).markdown.getMarkdown();
+        setContent(md);
+        setIsDirty(true);
+      }
+      setSmartSuggestions([]);
+    } finally {
+      setIsAutoLinking(false);
+    }
+  };
 
   const handleInsertAiLink = (targetTitle: string, relationType?: string) => {
     const linkSyntax = relationType && relationType !== 'references'
@@ -371,27 +471,29 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
                   <Check size={14} />
                   Publish
                 </button>
-                <button
-                  onClick={() => {
-                    setIsAiDrawerOpen((prev) => !prev);
-                    setIsInspectorOpen(false);
-                  }}
-                  className="btn btn-secondary-white"
-                  style={{
-                    padding: '4px 12px',
-                    fontSize: '0.78rem',
-                    height: '30px',
-                    borderColor: isAiDrawerOpen ? '#0755E9' : '#BFDBFE',
-                    backgroundColor: isAiDrawerOpen ? '#EFF6FF' : '#FFFFFF',
-                    color: '#0755E9',
-                    fontWeight: 600,
-                    gap: '5px',
-                  }}
-                  title="Toggle AI Co-Pilot drawer to discover graph connections, auto-sort, and chat with note"
-                >
-                  <Sparkles size={14} color="#0755E9" />
-                  AI Co-Pilot
-                </button>
+                {isAiEnabled && (
+                  <button
+                    onClick={() => {
+                      setIsAiDrawerOpen((prev) => !prev);
+                      setIsInspectorOpen(false);
+                    }}
+                    className="btn btn-secondary-white"
+                    style={{
+                      padding: '4px 12px',
+                      fontSize: '0.78rem',
+                      height: '30px',
+                      borderColor: isAiDrawerOpen ? '#0755E9' : '#BFDBFE',
+                      backgroundColor: isAiDrawerOpen ? '#EFF6FF' : '#FFFFFF',
+                      color: '#0755E9',
+                      fontWeight: 600,
+                      gap: '5px',
+                    }}
+                    title="Toggle AI Co-Pilot drawer to discover graph connections, auto-sort, and chat with note"
+                  >
+                    <Sparkles size={14} color="#0755E9" />
+                    AI Co-Pilot
+                  </button>
+                )}
                 <ActionMenu
                   label="More note actions"
                   compact
@@ -585,6 +687,18 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
             <Link size={13} />
             <span style={{ fontSize: '0.74rem' }}>[[Link]]</span>
           </button>
+          {isAiEnabled && (
+            <button
+              onClick={handleMagicAutoLink}
+              disabled={isAutoLinking}
+              className="btn btn-ghost"
+              style={{ padding: '4px 6px', color: '#7C3AED', fontWeight: 600, gap: '4px' }}
+              title="Magic Auto-Link: Automatically discover and insert [[wiki-links]] for known concepts"
+            >
+              <Sparkles size={13} className={isAutoLinking ? 'animate-spin' : 'animate-pulse'} />
+              <span style={{ fontSize: '0.74rem' }}>Auto-Link</span>
+            </button>
+          )}
           <button
             onClick={() => editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}
             className="btn btn-ghost"
@@ -653,6 +767,17 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
         className="markdown-editor__scroll"
       >
         <div className="markdown-editor__page">
+          {/* Smart Link Suggestion Banner */}
+          {isAiEnabled && (
+            <SmartLinkBanner
+              suggestions={smartSuggestions}
+              onAccept={handleAcceptSmartLink}
+              onAcceptAll={handleAcceptAllSmartLinks}
+              onDismiss={() => setSmartSuggestions([])}
+              isProcessing={isAutoLinking}
+            />
+          )}
+
           {/* Floating WikiLink Autocomplete Popover */}
           {showPicker && (
             <div className="wiki-link-picker-anchor" style={{ left: pickerPosition.left, top: pickerPosition.top }}>
@@ -702,7 +827,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
         )}
 
         {/* AI Co-Pilot Drawer */}
-        {isAiDrawerOpen && (
+        {isAiEnabled && isAiDrawerOpen && (
           <NotesAiDrawer
             isOpen={isAiDrawerOpen}
             onClose={() => setIsAiDrawerOpen(false)}
