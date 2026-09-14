@@ -1,0 +1,68 @@
+﻿name: Deploy to AWS Demo
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target Environment'
+        required: true
+        default: 'demo'
+        type: choice
+        options:
+          - demo
+          - staging
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Deploy to AWS Demo Instance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+
+      - name: Deploy via SSH or AWS SSM
+        uses: appleboy/ssh-action@v1.0.3
+        if: "${{ secrets.EC2_HOST != '' }}"
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME || 'ubuntu' }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            echo "==> Deploying tkxel Vault to AWS Demo..."
+            if [ ! -d "~/tkxel-vault-v2" ]; then
+              git clone https://github.com/mubashirali-hash/tkxel-vault-v2.git ~/tkxel-vault-v2
+            fi
+            cd ~/tkxel-vault-v2
+            git fetch --all
+            git checkout ${{ github.ref_name }}
+            git pull origin ${{ github.ref_name }}
+            
+            # Setup Environment Variables
+            cat << 'EOF' > .env
+            POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD || 'tkxelSecurePass2026' }}
+            KMS_PROVIDER=${{ secrets.KMS_PROVIDER || 'mock' }}
+            AWS_KMS_KEY_ID=${{ secrets.AWS_KMS_KEY_ID || '' }}
+            GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID || '' }}
+            EOF
+
+            # Launch Docker Compose Stack
+            docker compose down || true
+            docker compose up -d --build
+
+            # Wait for Database and API health
+            echo "==> Verifying deployment health..."
+            sleep 15
+            docker compose ps
+            curl -I http://localhost:3000 || exit 1
+            echo "==> Deployment to AWS Demo succeeded!"
