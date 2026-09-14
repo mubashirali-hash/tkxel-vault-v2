@@ -27,6 +27,7 @@ import {
 export interface NotesAiDrawerProps {
   isOpen: boolean;
   onClose: () => void;
+  activeNoteId?: string;
   activeNoteTitle: string;
   activeNoteContent: string;
   vaultNotes: VaultNoteFull[];
@@ -43,6 +44,7 @@ export interface NotesAiDrawerProps {
 export const NotesAiDrawer: React.FC<NotesAiDrawerProps> = ({
   isOpen,
   onClose,
+  activeNoteId,
   activeNoteTitle,
   activeNoteContent,
   vaultNotes,
@@ -93,8 +95,16 @@ export const NotesAiDrawer: React.FC<NotesAiDrawerProps> = ({
     onCloseRef.current = onClose;
   }, [onClose]);
 
-  // Reset suggestions when active note changes
+  const lastNoteIdRef = useRef<string | undefined>(undefined);
+
+  // Reset suggestions and chat ONLY when switching to a different note ID
   useEffect(() => {
+    const noteKey = activeNoteId || activeNoteTitle;
+    if (lastNoteIdRef.current === noteKey) {
+      return;
+    }
+    lastNoteIdRef.current = noteKey;
+
     setSuggestedLinks([]);
     setCategorySuggestion(null);
     setLinkedTitles(new Set());
@@ -107,7 +117,7 @@ export const NotesAiDrawer: React.FC<NotesAiDrawerProps> = ({
         timestamp: new Date(),
       },
     ]);
-  }, [activeNoteTitle]);
+  }, [activeNoteId, activeNoteTitle]);
 
   useEffect(() => {
     if (!isOpen) return;

@@ -33,6 +33,7 @@ export class NotesAiClient {
     activeNoteContent: string;
     vaultNotes: Array<{ id: string; title: string; aliases?: string[]; tags?: string[]; snippet?: string }>;
   }): Promise<SuggestedLink[]> {
+    if (!this.isAiPluginEnabled()) return [];
     try {
       const res = await fetch(`${API_BASE}/suggest-links`, {
         method: 'POST',
@@ -42,8 +43,7 @@ export class NotesAiClient {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       return data.suggestions || [];
-    } catch (err) {
-      console.warn('AI Link Suggestion API error, falling back to local scan:', err);
+    } catch {
       // Fast client-side fallback if backend is offline
       const { activeNoteTitle, activeNoteContent, vaultNotes } = params;
       const contentLower = activeNoteContent.toLowerCase();

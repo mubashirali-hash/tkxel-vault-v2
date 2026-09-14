@@ -15,13 +15,94 @@ const AddSkillModal = React.lazy(() => import('./components/skills/AddSkillModal
 const ConvertNoteToSkillModal = React.lazy(() => import('./components/skills/ConvertNoteToSkillModal.js').then(m => ({ default: m.ConvertNoteToSkillModal })));
 const McpConnectModal = React.lazy(() => import('./components/mcp/McpConnectModal.js').then(m => ({ default: m.McpConnectModal })));
 import { SkillItem } from './components/skills/AddSkillModal.js';
-import { loadVaultData, addVaultShareApi, revokeVaultShareApi } from './utils/storage.js';
+import { loadVaultData, saveVaultLocalCache, addVaultShareApi, revokeVaultShareApi } from './utils/storage.js';
 import { Lock, Sparkles, Plus, Copy, Check, Terminal, ShieldCheck, FileText, Trash2 } from 'lucide-react';
 import { GoogleOAuthProvider, GoogleLogin, CredentialResponse } from '@react-oauth/google';
 import { jwtDecode } from 'jwt-decode';
 
-const SEED_PAGES: Page[] = [];
-const SEED_LINKS: Array<{ from_page_id: string; to_page_id: string }> = [];
+const SEED_PAGES: Page[] = [
+  {
+    id: 'page_arch_01',
+    vault_id: '11111111-1111-1111-1111-111111111111',
+    title: 'System Architecture',
+    folder: 'Architecture',
+    type: 'architecture',
+    tags: ['core', 'infrastructure', 'security'],
+    aliases: ['Architecture', 'Tech Stack'],
+    created_at: new Date('2026-02-01'),
+    front_matter: {
+      title: 'System Architecture',
+      folder: 'Architecture',
+      type: 'architecture',
+      tags: ['core', 'infrastructure', 'security'],
+      aliases: ['Architecture', 'Tech Stack'],
+      body: `# System Architecture\n\nOverview of tkxel Vault microservices and [[API Gateway Security]] with [[KMS Encryption Model]].\n\n## Core Principles\n- Air-gapped confidentiality.\n- Zero-plain-text storage on disk.\n- Envelope encryption with AWS KMS.`,
+    },
+  },
+  {
+    id: 'page_sec_02',
+    vault_id: '11111111-1111-1111-1111-111111111111',
+    title: 'API Gateway Security',
+    folder: 'Security',
+    type: 'note',
+    tags: ['security', 'mcp', 'gateway'],
+    aliases: ['Gateway Rules', 'MCP Gateway'],
+    created_at: new Date('2026-02-02'),
+    front_matter: {
+      title: 'API Gateway Security',
+      folder: 'Security',
+      type: 'note',
+      tags: ['security', 'mcp', 'gateway'],
+      aliases: ['Gateway Rules', 'MCP Gateway'],
+      body: `# API Gateway Security\n\nImplements Anthropic Model Context Protocol (MCP 2025-11-25) over Streamable HTTP and stdio.\n\nConnects to [[System Architecture]] and [[Coding Agent Guidelines]].`,
+    },
+  },
+  {
+    id: 'page_kms_03',
+    vault_id: '11111111-1111-1111-1111-111111111111',
+    title: 'KMS Encryption Model',
+    folder: 'Security',
+    type: 'decision',
+    tags: ['crypto', 'envelope-encryption', 'aws-kms'],
+    aliases: ['Envelope Encryption', 'KMS Master Key'],
+    created_at: new Date('2026-02-03'),
+    front_matter: {
+      title: 'KMS Encryption Model',
+      folder: 'Security',
+      type: 'decision',
+      tags: ['crypto', 'envelope-encryption', 'aws-kms'],
+      aliases: ['Envelope Encryption', 'KMS Master Key'],
+      body: `# KMS Encryption Model\n\nAES-256-GCM envelope encryption protecting document chunks and proprietary skill instructions.\n\nReferences [[System Architecture]].`,
+    },
+  },
+  {
+    id: 'page_agent_04',
+    vault_id: '11111111-1111-1111-1111-111111111111',
+    title: 'Coding Agent Guidelines',
+    folder: 'Agents',
+    type: 'project',
+    tags: ['claude-code', 'codex', 'antigravity'],
+    aliases: ['Agent Rules', 'Claude Code Ingestion'],
+    created_at: new Date('2026-02-04'),
+    front_matter: {
+      title: 'Coding Agent Guidelines',
+      folder: 'Agents',
+      type: 'project',
+      tags: ['claude-code', 'codex', 'antigravity'],
+      aliases: ['Agent Rules', 'Claude Code Ingestion'],
+      body: `# Coding Agent Guidelines\n\nBest practices for pairing Claude Code, Codex, and Antigravity with tkxel Vault.\n\nConfigured via [[API Gateway Security]].`,
+    },
+  },
+];
+
+const SEED_LINKS: Array<{ from_page_id: string; to_page_id: string }> = [
+  { from_page_id: 'page_arch_01', to_page_id: 'page_sec_02' },
+  { from_page_id: 'page_arch_01', to_page_id: 'page_kms_03' },
+  { from_page_id: 'page_sec_02', to_page_id: 'page_arch_01' },
+  { from_page_id: 'page_sec_02', to_page_id: 'page_agent_04' },
+  { from_page_id: 'page_kms_03', to_page_id: 'page_arch_01' },
+  { from_page_id: 'page_agent_04', to_page_id: 'page_sec_02' },
+];
 const SEED_SKILLS: SkillItem[] = [];
 const SEED_TIMELINE: TimelineEntry[] = [];
 const SEED_AUDIT: AuditEvent[] = [];
@@ -167,8 +248,8 @@ export const App: React.FC = () => {
     const targetId = noteId || activePageId;
     if (!targetId) return;
 
-    setPages((prev) =>
-      prev.map((p) => {
+    setPages((prev) => {
+      const updated = prev.map((p) => {
         if (p.id !== targetId) return p;
         const currentBody = (p.front_matter?.body as string) || '';
         let updatedBody = content;
@@ -185,26 +266,32 @@ export const App: React.FC = () => {
           },
           updated_at: new Date(),
         };
-      })
-    );
+      });
+      saveVaultLocalCache(currentVault.id, { pages: updated });
+      return updated;
+    });
   };
 
   useEffect(() => {
     // Initial load state
     const userId = userInfo?.email || 'usr_admin';
     loadVaultData(currentVault.id, userId).then((savedState: any) => {
-      if (savedState) {
-        setPages(savedState.pages || []);
-        setActivePageId(savedState.pages && savedState.pages.length > 0 ? savedState.pages[0].id : '');
+      if (savedState && savedState.pages && savedState.pages.length > 0) {
+        setPages(savedState.pages);
+        setActivePageId(savedState.pages[0].id);
         setLinks(savedState.links || []);
         setLockedSkills(savedState.lockedSkills || []);
         setTimelineEntries(savedState.timelineEntries || []);
         setAuditEvents(savedState.auditEvents || []);
         setShares(savedState.shares || []);
+      } else {
+        setPages(SEED_PAGES);
+        setActivePageId(SEED_PAGES[0]?.id || '');
+        setLinks(SEED_LINKS);
       }
       setIsLoaded(true);
     });
-  }, [userInfo?.email]);
+  }, [userInfo?.email, currentVault.id]);
 
   const currentRole = useMemo<VaultRole | null>(() => {
     if (!userInfo?.email) return null;
@@ -518,10 +605,11 @@ export const App: React.FC = () => {
       }
     });
 
-    setLinks((prev) => [
-      ...prev.filter((l) => l.from_page_id !== activePage.id),
+    const finalLinks = [
+      ...links.filter((l) => l.from_page_id !== activePage.id),
       ...newOutgoing,
-    ]);
+    ];
+    setLinks(finalLinks);
 
     // Record audit event
     const newAuditEvent: AuditEvent = {
@@ -538,6 +626,12 @@ export const App: React.FC = () => {
       },
     };
     setAuditEvents((prev) => [newAuditEvent, ...prev]);
+
+    // Immediately persist to local cache so user never loses draft or publish state
+    saveVaultLocalCache(currentVault.id, {
+      pages: updatedPages,
+      links: finalLinks,
+    });
 
     // Make API call for draft or publish (Epic B)
     try {

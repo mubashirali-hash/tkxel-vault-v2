@@ -114,7 +114,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
 
   // Proactively scan for link suggestions when AI plugin is active
   useEffect(() => {
-    if (!isAiEnabled || !canEdit || content.trim().length < 25) {
+    if (!isAiEnabled || !canEdit || isAutoLinking || content.trim().length < 25) {
       setSmartSuggestions([]);
       return;
     }
@@ -137,10 +137,10 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
       } catch {
         setSmartSuggestions([]);
       }
-    }, 1200);
+    }, 2500);
 
     return () => clearTimeout(timer);
-  }, [isAiEnabled, canEdit, content, title, page.id, availablePages]);
+  }, [isAiEnabled, canEdit, isAutoLinking, content, title, page.id, availablePages]);
 
   const handleAcceptSmartLink = (sug: SuggestedLink) => {
     const res = NotesAiClient.localAutoApplyWikiLinks({
@@ -249,6 +249,17 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
         editor.commands.setContent(updatedText);
       }
       setIsDirty(true);
+      onSave(
+        {
+          title,
+          content: updatedText,
+          tags,
+          aliases,
+          type: pageType,
+          folder,
+        },
+        true
+      );
     } else {
       onEditNoteContent?.(noteId, newContent, mode);
     }
@@ -267,6 +278,34 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   const [pickerQuery, setPickerQuery] = useState('');
   const [pickerPosition, setPickerPosition] = useState({ left: 24, top: 180 });
   const editorRef = useRef<HTMLDivElement>(null);
+
+  const checkAndPositionPicker = (editorInstance: any) => {
+    if (!editorInstance || editorInstance.isDestroyed) return;
+    const { from } = editorInstance.state.selection;
+    const textBefore = editorInstance.state.doc.textBetween(Math.max(0, from - 50), from, ' ');
+    const lastOpen = textBefore.lastIndexOf('[[');
+    if (lastOpen !== -1 && !textBefore.slice(lastOpen).includes(']]')) {
+      const query = textBefore.slice(lastOpen + 2);
+      setShowPicker(true);
+      setPickerQuery(query);
+      try {
+        const coordinates = editorInstance.view.coordsAtPos(from);
+        const pickerHeight = 280;
+        const fitsBelow = coordinates.bottom + pickerHeight <= window.innerHeight - 10;
+        const topPos = fitsBelow
+          ? coordinates.bottom + 6
+          : Math.max(12, coordinates.top - pickerHeight - 6);
+        setPickerPosition({
+          left: Math.max(12, Math.min(coordinates.left, window.innerWidth - 360)),
+          top: topPos,
+        });
+      } catch {
+        setPickerPosition({ left: 24, top: 120 });
+      }
+    } else {
+      setShowPicker(false);
+    }
+  };
 
   const defaultCategories = ['note', 'decision', 'meeting', 'project', 'client', 'person'];
   const allKnownCategories = Array.from(new Set(availablePages.map((p) => p.type).concat(defaultCategories)));
@@ -299,19 +338,10 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     onUpdate: ({ editor }) => {
       const md = (editor.storage as any).markdown.getMarkdown();
       setContent(md);
-
-      // Detect if user typed '[['
-      const { from } = editor.state.selection;
-      const textBefore = editor.state.doc.textBetween(Math.max(0, from - 30), from);
-      const lastOpen = textBefore.lastIndexOf('[[');
-      if (lastOpen !== -1 && !textBefore.slice(lastOpen).includes(']]')) {
-        setShowPicker(true);
-        setPickerQuery(textBefore.slice(lastOpen + 2));
-        const coordinates = editor.view.coordsAtPos(from);
-        setPickerPosition({ left: Math.max(12, Math.min(coordinates.left, window.innerWidth - 340)), top: coordinates.bottom + 6 });
-      } else {
-        setShowPicker(false);
-      }
+      checkAndPositionPicker(editor);
+    },
+    onSelectionUpdate: ({ editor }) => {
+      checkAndPositionPicker(editor);
     },
   });
 
@@ -378,10 +408,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   const handleToolbarLinkClick = () => {
     if (editor && !editor.isDestroyed) {
       editor.chain().focus().insertContent('[[').run();
-      setShowPicker(true);
-      setPickerQuery('');
-      const coordinates = editor.view.coordsAtPos(editor.state.selection.from);
-      setPickerPosition({ left: Math.max(12, Math.min(coordinates.left, window.innerWidth - 340)), top: coordinates.bottom + 6 });
+      checkAndPositionPicker(editor);
     }
   };
 
@@ -831,6 +858,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
           <NotesAiDrawer
             isOpen={isAiDrawerOpen}
             onClose={() => setIsAiDrawerOpen(false)}
+            activeNoteId={page.id}
             activeNoteTitle={title}
             activeNoteContent={content}
             vaultNotes={availablePages.map((p) => ({

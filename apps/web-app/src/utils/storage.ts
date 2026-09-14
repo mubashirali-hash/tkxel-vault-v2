@@ -13,6 +13,41 @@ export interface VaultData {
 
 const API_URL = 'http://localhost:3002/api';
 
+export function saveVaultLocalCache(vaultId: string, data: Partial<VaultData>): void {
+  try {
+    const key = `tkxel_vault_cache_${vaultId}`;
+    const raw = localStorage.getItem(key);
+    const existing = raw ? JSON.parse(raw) : {};
+    const merged = { ...existing, ...data, cached_at: new Date().toISOString() };
+    localStorage.setItem(key, JSON.stringify(merged));
+  } catch (err) {
+    console.warn('Failed to save vault local cache:', err);
+  }
+}
+
+export function getVaultLocalCache(vaultId: string): VaultData | null {
+  try {
+    const raw = localStorage.getItem(`tkxel_vault_cache_${vaultId}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return {
+      pages: (parsed.pages || []).map((p: any) => ({
+        ...p,
+        folder: p.folder || (p.front_matter?.folder as string) || undefined,
+        created_at: new Date(p.created_at),
+        updated_at: p.updated_at ? new Date(p.updated_at) : undefined,
+      })),
+      links: parsed.links || [],
+      lockedSkills: (parsed.lockedSkills || []).map((s: any) => ({ ...s, created_at: new Date(s.created_at) })),
+      timelineEntries: (parsed.timelineEntries || []).map((t: any) => ({ ...t, created_at: new Date(t.created_at) })),
+      shares: (parsed.shares || []).map((s: any) => ({ ...s, granted_at: new Date(s.granted_at) })),
+      auditEvents: (parsed.auditEvents || []).map((a: any) => ({ ...a, timestamp: new Date(a.timestamp) })),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function loadVaultData(vaultId: string, userId: string = 'usr_admin'): Promise<VaultData | null> {
   const token = localStorage.getItem('ssoToken');
   const headers: Record<string, string> = { 'x-user-id': userId };
@@ -29,30 +64,55 @@ export async function loadVaultData(vaultId: string, userId: string = 'usr_admin
     ]);
 
     const [pagesData, linksData, skillsData, timelineData, sharesData, auditsData] = await Promise.all([
-      pagesRes?.ok ? pagesRes.json() : { pages: [] },
-      linksRes?.ok ? linksRes.json() : { links: [] },
-      skillsRes?.ok ? skillsRes.json() : { lockedSkills: [] },
-      timelineRes?.ok ? timelineRes.json() : { timelineEntries: [] },
-      sharesRes?.ok ? sharesRes.json() : { shares: [] },
-      auditsRes?.ok ? auditsRes.json() : { auditEvents: [] },
+      pagesRes?.ok ? pagesRes.json() : null,
+      linksRes?.ok ? linksRes.json() : null,
+      skillsRes?.ok ? skillsRes.json() : null,
+      timelineRes?.ok ? timelineRes.json() : null,
+      sharesRes?.ok ? sharesRes.json() : null,
+      auditsRes?.ok ? auditsRes.json() : null,
     ]);
 
+    // If server responded with valid pages data, update cache and return
+    if (pagesData && Array.isArray(pagesData.pages) && pagesData.pages.length > 0) {
+      const result: VaultData = {
+        pages: pagesData.pages.map((p: any) => ({
+          ...p,
+          folder: p.folder || (p.front_matter?.folder as string) || undefined,
+          created_at: new Date(p.created_at),
+          updated_at: p.updated_at ? new Date(p.updated_at) : undefined,
+        })),
+        links: linksData?.links || [],
+        lockedSkills: (skillsData?.lockedSkills || []).map((s: any) => ({ ...s, created_at: new Date(s.created_at) })),
+        timelineEntries: (timelineData?.timelineEntries || []).map((t: any) => ({ ...t, created_at: new Date(t.created_at) })),
+        shares: (sharesData?.shares || []).map((s: any) => ({ ...s, granted_at: new Date(s.granted_at) })),
+        auditEvents: (auditsData?.auditEvents || []).map((a: any) => ({ ...a, timestamp: new Date(a.timestamp) })),
+      };
+      saveVaultLocalCache(vaultId, result);
+      return result;
+    }
+
+    // If server is offline or returned empty, check local cache fallback
+    const localCached = getVaultLocalCache(vaultId);
+    if (localCached && localCached.pages.length > 0) {
+      return localCached;
+    }
+
     return {
-      pages: (pagesData.pages || []).map((p: any) => ({
+      pages: (pagesData?.pages || []).map((p: any) => ({
         ...p,
         folder: p.folder || (p.front_matter?.folder as string) || undefined,
         created_at: new Date(p.created_at),
         updated_at: p.updated_at ? new Date(p.updated_at) : undefined,
       })),
-      links: linksData.links || [],
-      lockedSkills: (skillsData.lockedSkills || []).map((s: any) => ({ ...s, created_at: new Date(s.created_at) })),
-      timelineEntries: (timelineData.timelineEntries || []).map((t: any) => ({ ...t, created_at: new Date(t.created_at) })),
-      shares: (sharesData.shares || []).map((s: any) => ({ ...s, granted_at: new Date(s.granted_at) })),
-      auditEvents: (auditsData.auditEvents || []).map((a: any) => ({ ...a, timestamp: new Date(a.timestamp) })),
+      links: linksData?.links || [],
+      lockedSkills: (skillsData?.lockedSkills || []).map((s: any) => ({ ...s, created_at: new Date(s.created_at) })),
+      timelineEntries: (timelineData?.timelineEntries || []).map((t: any) => ({ ...t, created_at: new Date(t.created_at) })),
+      shares: (sharesData?.shares || []).map((s: any) => ({ ...s, granted_at: new Date(s.granted_at) })),
+      auditEvents: (auditsData?.auditEvents || []).map((a: any) => ({ ...a, timestamp: new Date(a.timestamp) })),
     };
   } catch (err) {
-    console.error('Failed to load vault data:', err);
-    return null;
+    console.error('Failed to load vault data, attempting cache fallback:', err);
+    return getVaultLocalCache(vaultId);
   }
 }
 

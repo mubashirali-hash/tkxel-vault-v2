@@ -31,12 +31,15 @@ export const WikiLinkPicker: React.FC<WikiLinkPickerProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
+        e.stopPropagation();
         setSelectedIndex((prev) => (filtered.length > 0 ? (prev + 1) % filtered.length : 0));
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
+        e.stopPropagation();
         setSelectedIndex((prev) => (filtered.length > 0 ? (prev - 1 + filtered.length) % filtered.length : 0));
-      } else if (e.key === 'Enter') {
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
+        e.stopPropagation();
         if (filtered.length > 0 && filtered[selectedIndex]) {
           onSelectLink(filtered[selectedIndex].title);
         } else {
@@ -44,12 +47,13 @@ export const WikiLinkPicker: React.FC<WikiLinkPickerProps> = ({
         }
       } else if (e.key === 'Escape') {
         e.preventDefault();
+        e.stopPropagation();
         onClose();
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [filtered, selectedIndex, query, onSelectLink, onClose]);
 
   return (
@@ -58,15 +62,14 @@ export const WikiLinkPicker: React.FC<WikiLinkPickerProps> = ({
       role="listbox"
       aria-label="Link to note"
       style={{
-        position: 'absolute',
-        width: 'min(320px, calc(100vw - 24px))',
-        maxHeight: '260px',
+        width: 'min(340px, calc(100vw - 24px))',
+        maxHeight: '270px',
         overflowY: 'auto',
         padding: '6px',
-        zIndex: 200,
-        boxShadow: 'var(--shadow-lg)',
-        border: '1px solid var(--tk-primary)',
+        boxShadow: '0 12px 30px -4px rgba(0, 0, 0, 0.18), 0 4px 12px -2px rgba(0, 0, 0, 0.08)',
+        border: '1px solid var(--tk-primary, #0755e9)',
         backgroundColor: '#FFFFFF',
+        borderRadius: '8px',
       }}
     >
       <div
