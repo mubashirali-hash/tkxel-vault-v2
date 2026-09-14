@@ -62,8 +62,8 @@ export const MarkdownPreview: React.FC<MarkdownPreviewProps> = ({ content }) => 
   useEffect(() => {
     const rawHtml = marked.parse(content, { async: false }) as string;
     const clean = DOMPurify.sanitize(rawHtml, {
-      // Allow SVG elements for preview
-      ADD_TAGS: ['svg', 'use', 'path', 'polygon', 'polyline', 'line', 'rect', 'circle', 'ellipse', 'g', 'defs', 'marker', 'text', 'tspan', 'foreignObject'],
+      // Allow safe SVG elements for preview (excluding foreignObject)
+      ADD_TAGS: ['svg', 'use', 'path', 'polygon', 'polyline', 'line', 'rect', 'circle', 'ellipse', 'g', 'defs', 'marker', 'text', 'tspan'],
       ADD_ATTR: ['viewBox', 'xmlns', 'xlink:href', 'href', 'marker-end', 'marker-start', 'd', 'points', 'transform', 'style', 'class', 'id', 'width', 'height', 'fill', 'stroke', 'stroke-width', 'x', 'y', 'cx', 'cy', 'r', 'rx', 'ry', 'x1', 'y1', 'x2', 'y2', 'font-size', 'text-anchor', 'dominant-baseline', 'aria-label', 'role'],
     });
     setHtml(clean);
@@ -102,8 +102,7 @@ export const MarkdownPreview: React.FC<MarkdownPreviewProps> = ({ content }) => 
             const { svg } = await mermaid.render(id, source);
             // Inject SVG directly. Mermaid with securityLevel: 'antiscript'
             // internally uses DOMPurify while preserving <foreignObject> labels
-            // which standard DOMPurify SVG profiles would otherwise strip.
-            wrapper.innerHTML = svg;
+            wrapper.innerHTML = DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true } });
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             wrapper.className = 'markdown-preview__mermaid-error';

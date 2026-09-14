@@ -18,7 +18,7 @@
   "dependencies": {
     "@tkxel-vault/types": "workspace:*",
     "@tkxel-vault/vault-core": "workspace:*",
-    "drizzle-orm": "^0.39.3",
+    "drizzle-orm": "^0.45.2",
     "google-auth-library": "^11.0.2",
     "ioredis": "^5.6.0"
   },

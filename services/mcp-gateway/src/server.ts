@@ -92,9 +92,13 @@ export class McpGatewayServer {
     const method = req.method || 'GET';
 
     // CORS & Streamable HTTP Headers
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    const reqOrigin = req.headers.origin;
+    const allowed = ['http://localhost:3000', 'http://127.0.0.1:3000', 'https://claude.ai'];
+    const originToSet = (reqOrigin && allowed.includes(reqOrigin)) ? reqOrigin : (process.env.NODE_ENV !== 'production' && reqOrigin ? reqOrigin : allowed[0]);
+    res.setHeader('Access-Control-Allow-Origin', originToSet);
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-MCP-Protocol-Version');
     res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
 
     if (method === 'OPTIONS') {
       res.writeHead(204);

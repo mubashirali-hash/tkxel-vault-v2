@@ -33,14 +33,38 @@ function toValidUuid(id?: string): string {
 const app = express();
 const port = process.env.PORT || 3002;
 
-app.use(cors());
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+  : ['http://localhost:3000', 'http://127.0.0.1:3000'];
+
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS policy'));
+    }
+  },
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
 app.use(express.json({ limit: '10mb' }));
 
-app.get('/api/health', (_req: Request, res: Response) => {
-  res.json({ status: 'ok', service: 'tkxel-vault-api-server' });
+app.get('/api/health', async (_req: Request, res: Response) => {
+  try {
+    await db.execute(sql`SELECT 1`);
+    res.json({ status: 'ok', service: 'tkxel-vault-api-server', database: 'connected' });
+  } catch (err: any) {
+    res.status(503).json({ status: 'degraded', service: 'tkxel-vault-api-server', database: 'disconnected', error: err.message });
+  }
 });
-
-app.use('/api/ai', aiRouter);
 
 import { OAuth2Client } from 'google-auth-library';
 const oauthClient = new OAuth2Client(
@@ -102,6 +126,9 @@ app.use(async (req: Request, res: Response, next) => {
 
   next();
 });
+
+// AI Plugin Routes (Protected by Authentication)
+app.use('/api/ai', aiRouter);
 
 // Helper middleware generator for AuthZ
 export const requireRole = (allowedRoles: Role[]) => {
@@ -540,8 +567,8 @@ app.get('/api/pages/:id/versions', requireRole(['owner', 'editor', 'reader']), a
   }
 });
 
-// GET /api/search: Full text search
-app.get('/api/search', async (req: Request, res: Response) => {
+// GET /api/search: Full text search (Requires vault access)
+app.get('/api/search', requireRole(['owner', 'editor', 'reader', 'consumer']), async (req: Request, res: Response) => {
   try {
     const q = req.query.q as string;
     const vaultId = req.query.vaultId as string;
@@ -562,12 +589,36 @@ app.get('/api/search', async (req: Request, res: Response) => {
 // -------------------------------------------------------------
 async function handleRunSkillEndpoint(req: Request, res: Response): Promise<void> {
   try {
-    const { vaultId, skillName, parameters = {}, role } = req.body;
+    const { vaultId, skillName, parameters = {} } = req.body;
     const userId = (req as any).userId || 'desktop-agent';
 
     if (!vaultId || !skillName) {
       res.status(400).json({ error: 'vaultId and skillName are required' });
       return;
+    }
+
+    const userRole = (req as any).userRole || await getUserRoleForVault(userId, vaultId);
+    if (!userRole) {
+      res.status(403).json({ error: 'Forbidden: Insufficient Permissions to execute skills in this vault' });
+      return;
+    }
+
+    const safeParams = (parameters && typeof parameters === 'object' && !Array.isArray(parameters))
+      ? parameters
+      : {};
+    const paramText = JSON.stringify(safeParams);
+    const INJECTION_PATTERNS = [
+      /ignore\s+(all\s+)?(previous\s+|prior\s+)?instructions/i,
+      /reveal\s+(the\s+)?system\s+prompt/i,
+      /output\s+(the\s+)?system\s+prompt/i,
+      /repeat\s+(all\s+)?instructions/i,
+      /you\s+are\s+now\s+in\s+DAN\s+mode/i,
+    ];
+    for (const pattern of INJECTION_PATTERNS) {
+      if (pattern.test(paramText)) {
+        res.status(400).json({ error: 'Bad Request: Parameter payload contains prohibited prompt injection patterns.' });
+        return;
+      }
     }
 
     const normalizedName = String(skillName).trim().toLowerCase();
@@ -645,7 +696,7 @@ async function handleRunSkillEndpoint(req: Request, res: Response): Promise<void
         metadata: {
           vault_id: vaultId,
           skill_name: skill.name,
-          role: role || 'consumer',
+          role: userRole,
           status: 'success',
         },
       });
@@ -662,11 +713,17 @@ async function handleRunSkillEndpoint(req: Request, res: Response): Promise<void
 
 async function handleAskVaultEndpoint(req: Request, res: Response): Promise<void> {
   try {
-    const { vaultId, query, role } = req.body;
+    const { vaultId, query } = req.body;
     const userId = (req as any).userId || 'desktop-agent';
 
     if (!vaultId) {
       res.status(400).json({ error: 'vaultId is required' });
+      return;
+    }
+
+    const userRole = (req as any).userRole || await getUserRoleForVault(userId, vaultId);
+    if (!userRole) {
+      res.status(403).json({ error: 'Forbidden: Insufficient Permissions for this vault' });
       return;
     }
 
@@ -708,7 +765,7 @@ async function handleAskVaultEndpoint(req: Request, res: Response): Promise<void
         actor_id: userId,
         action: 'ask_vault',
         target_id: vaultId,
-        metadata: { query, role: role || 'consumer', status: 'success' },
+        metadata: { query, role: userRole, status: 'success' },
       });
     } catch {}
 
@@ -770,8 +827,36 @@ app.listen(port, () => {
 
 // Dedicated Skill Runner Listener on port 3003 (for MCP Gateway compatibility)
 const runnerApp = express();
-runnerApp.use(cors());
+runnerApp.use(cors(corsOptions));
 runnerApp.use(express.json({ limit: '10mb' }));
+
+// Auth guard on runnerApp
+runnerApp.use(async (req: Request, res: Response, next) => {
+  if (req.path === '/health') return next();
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Unauthorized: Missing or invalid Authorization header' });
+    return;
+  }
+  const token = authHeader.split(' ')[1];
+  if (process.env.NODE_ENV !== 'production' && token === 'dev_admin_token') {
+    (req as any).userId = process.env.VITE_VAULT_OWNER_EMAIL || 'mubashir.ali@camp1.tkxel.com';
+    return next();
+  }
+  try {
+    const ticket = await oauthClient.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    if (payload && payload.email) {
+      (req as any).userId = payload.email;
+      return next();
+    }
+  } catch {}
+  res.status(401).json({ error: 'Unauthorized: Invalid token' });
+});
+
 runnerApp.post('/api/run-skill', handleRunSkillEndpoint);
 runnerApp.post('/api/ask-vault', handleAskVaultEndpoint);
 runnerApp.get('/api/skills', handleListSkillsEndpoint);
@@ -780,7 +865,7 @@ runnerApp.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', service: 'tkxel-vault-skill-runner' });
 });
 
-runnerApp.listen(3003, () => {
-  console.log(`[Skill Runner Service] Running on http://localhost:3003`);
+runnerApp.listen(3003, '127.0.0.1', () => {
+  console.log(`[Skill Runner Service] Running on http://127.0.0.1:3003`);
 });
 

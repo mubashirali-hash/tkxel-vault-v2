@@ -662,17 +662,20 @@ export const App: React.FC = () => {
         if (res.status === 409) {
           alert('Conflict: This page was modified by another user. Please refresh to see their changes before saving your own.');
         } else {
-          console.error('Failed to save version to DB:', await res.text());
+          console.warn('Failed to save version to DB (cloud offline):', await res.text());
         }
+        return false;
       } else {
         const data = await res.json();
         if (data.updated_at) {
           // Sync our local page updated_at with the server's new one
           setPages((prev) => prev.map((p) => p.id === activePage.id ? { ...p, updated_at: new Date(data.updated_at) } : p));
         }
+        return true;
       }
     } catch (err) {
-      console.error('Network error saving version:', err);
+      console.warn('Network error saving version (offline mode):', err);
+      return false;
     }
   };
 

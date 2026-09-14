@@ -3,6 +3,17 @@ import { SuggestedLink, AiCategorySuggestion, SkillDraft, VaultNoteFull, AiActio
 const API_BASE = 'http://localhost:3002/api/ai';
 
 export class NotesAiClient {
+  private static getAuthHeaders(): Record<string, string> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (typeof window !== 'undefined') {
+      const token = localStorage.getItem('ssoToken');
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+    }
+    return headers;
+  }
+
   static isAiPluginEnabled(): boolean {
     if (typeof window === 'undefined') return true;
     return localStorage.getItem('tkxel_vault_ai_enabled') !== 'false';
@@ -20,7 +31,7 @@ export class NotesAiClient {
       return { status: 'disabled', provider: 'Disabled (Plugin Inactive)', enabled: false };
     }
     try {
-      const res = await fetch(`${API_BASE}/status`);
+      const res = await fetch(`${API_BASE}/status`, { headers: this.getAuthHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return await res.json();
     } catch {
@@ -37,7 +48,7 @@ export class NotesAiClient {
     try {
       const res = await fetch(`${API_BASE}/suggest-links`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.getAuthHeaders(),
         body: JSON.stringify(params),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -68,7 +79,7 @@ export class NotesAiClient {
     try {
       const res = await fetch(`${API_BASE}/sort-and-categorize`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.getAuthHeaders(),
         body: JSON.stringify(params),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -96,7 +107,7 @@ export class NotesAiClient {
     try {
       const res = await fetch(`${API_BASE}/ask`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.getAuthHeaders(),
         body: JSON.stringify(params),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -120,7 +131,7 @@ export class NotesAiClient {
     try {
       const res = await fetch(`${API_BASE}/auto-link`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.getAuthHeaders(),
         body: JSON.stringify(params),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -240,7 +251,7 @@ export class NotesAiClient {
     try {
       const res = await fetch(`${API_BASE}/skill-auto-sort`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.getAuthHeaders(),
         body: JSON.stringify(params),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

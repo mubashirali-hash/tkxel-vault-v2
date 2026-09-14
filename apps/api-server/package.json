@@ -16,7 +16,7 @@
     "@tkxel-vault/vault-core": "workspace:*",
     "@types/pg": "^8.23.1",
     "cors": "^2.8.5",
-    "drizzle-orm": "^0.39.3",
+    "drizzle-orm": "^0.45.2",
     "express": "^4.19.2",
     "google-auth-library": "^11.0.2",
     "pg": "^8.23.0"

@@ -118,6 +118,9 @@ export function createKmsProvider(): KmsProvider {
     }
     return new AwsKmsProvider(keyId, process.env.AWS_REGION || 'us-east-1');
   }
+  if (process.env.NODE_ENV === 'production' && !process.env.VAULT_MASTER_SECRET) {
+    throw new Error('FATAL: VAULT_MASTER_SECRET must be explicitly configured in production environments.');
+  }
   const secret = process.env.VAULT_MASTER_SECRET || 'tkxel-vault-default-local-master-key-32b!';
   return new MockKmsProvider(secret);
 }

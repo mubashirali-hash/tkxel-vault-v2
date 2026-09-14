@@ -17,6 +17,7 @@ import {
   Heading2,
   ListTodo,
   Table as TableIcon,
+  AlertTriangle,
 } from 'lucide-react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -44,7 +45,7 @@ export interface MarkdownEditorProps {
   currentRole: VaultRole;
   isOpenVault?: boolean;
   folders?: string[];
-  onSave: (updated: { title: string; content: string; tags: string[]; type: PageType; aliases?: string[]; folder?: string }, isDraft?: boolean) => void;
+  onSave: (updated: { title: string; content: string; tags: string[]; type: PageType; aliases?: string[]; folder?: string }, isDraft?: boolean) => Promise<boolean | void> | void;
   onDelete?: () => void;
   onOpenConvertToSkill?: () => void;
   onAddTimelineEntry: (text: string) => void;
@@ -109,6 +110,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   });
   const [isAutoSaving, setIsAutoSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const [syncError, setSyncError] = useState(false);
 
   const prevPageIdRef = useRef(page.id);
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -372,6 +374,12 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     ],
     content: initialBody,
     editable: canEdit,
+    editorProps: {
+      attributes: {
+        'aria-label': 'Document Markdown Editor',
+        role: 'textbox',
+      },
+    },
     onUpdate: ({ editor }) => {
       const md = (editor.storage as any).markdown.getMarkdown();
       setContent(md);
@@ -469,7 +477,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     setIsDirty(true);
   };
 
-  const handleSaveDocument = (isDraft: boolean = true, isAuto: boolean = false) => {
+  const handleSaveDocument = async (isDraft: boolean = true, isAuto: boolean = false) => {
     if (!canEdit) return;
     const currentMd = editor && !editor.isDestroyed ? (editor.storage as any).markdown.getMarkdown() : latestDocRef.current.content;
     const dataToSave = {
@@ -479,15 +487,25 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     if (isAuto) {
       setIsAutoSaving(true);
     }
-    onSave(dataToSave, isDraft);
-    setIsDirty(false);
-    isDirtyRef.current = false;
-    setLastSavedAt(new Date());
-    setSavedFeedback(true);
-    setTimeout(() => {
-      setSavedFeedback(false);
-      if (isAuto) setIsAutoSaving(false);
-    }, 1200);
+    try {
+      const result = await onSave(dataToSave, isDraft);
+      if (result === false) {
+        setSyncError(true);
+      } else {
+        setSyncError(false);
+        setLastSavedAt(new Date());
+      }
+    } catch {
+      setSyncError(true);
+    } finally {
+      setIsDirty(false);
+      isDirtyRef.current = false;
+      setSavedFeedback(true);
+      setTimeout(() => {
+        setSavedFeedback(false);
+        if (isAuto) setIsAutoSaving(false);
+      }, 1500);
+    }
   };
 
   // Debounced Autosave (1500ms after last edit)
@@ -559,6 +577,9 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
               📁 {folder || 'Unfiled'}
             </span>
             <input
+              id="markdown-note-title"
+              name="markdown-note-title"
+              aria-label="Document Title"
               type="text"
               value={title}
               disabled={!canEdit}
@@ -576,12 +597,16 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
           <div className="markdown-editor__actions">
             <span
               className="markdown-editor__save-state"
-              data-state={!isOnline ? 'offline' : isAutoSaving ? 'saving' : savedFeedback || !isDirty ? 'saved' : 'draft'}
-              title={lastSavedAt ? `Last autosaved at ${lastSavedAt.toLocaleTimeString()}` : undefined}
+              data-state={!isOnline || syncError ? 'offline' : isAutoSaving ? 'saving' : savedFeedback || !isDirty ? 'saved' : 'draft'}
+              title={syncError ? 'Cloud sync failed (database offline) — saved in local browser storage' : lastSavedAt ? `Last autosaved at ${lastSavedAt.toLocaleTimeString()}` : undefined}
             >
               {isAutoSaving ? (
                 <>
                   <Clock size={14} className="spin-animate" /> Saving...
+                </>
+              ) : syncError ? (
+                <>
+                  <AlertTriangle size={14} /> Saved locally (DB offline)
                 </>
               ) : (
                 <>

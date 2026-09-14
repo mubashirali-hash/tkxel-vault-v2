@@ -416,6 +416,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <Search size={16} aria-hidden="true" />
             <span className="sr-only">Search agents and tags</span>
             <input
+              id="sidebar-vault-search"
+              name="vault-search"
               type="search"
               placeholder="Search items, skills, tags"
               value={searchQuery}
@@ -427,7 +429,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="notes-sidebar__list">
           <div className="notes-sidebar__count">
             Vault Items <span>{visiblePages.length}</span>
-            {allFolders.length > 0 && <small style={{ marginLeft: 'auto', opacity: 0.7 }}>{allFolders.length} folders</small>}
+            {allFolders.length > 0 && <small style={{ marginLeft: 'auto', color: '#475569', fontWeight: 600 }}>{allFolders.length} folders</small>}
           </div>
 
           {visiblePages.length === 0 && allFolders.length === 0 ? (

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useId } from 'react';
 import { NodeViewWrapper, NodeViewContent, NodeViewProps, ReactNodeViewRenderer } from '@tiptap/react';
 import CodeBlock from '@tiptap/extension-code-block';
 import { Code, Eye, Edit3, Copy, Check, AlertTriangle } from 'lucide-react';
+import DOMPurify from 'dompurify';
 
 let mermaidReady = false;
 
@@ -69,7 +70,8 @@ export const CodeBlockComponent: React.FC<NodeViewProps> = ({
         const { svg } = await mermaid.render(diagramId, source);
 
         if (renderSeq.current === currentSeq) {
-          setSvgHtml(svg);
+          const sanitizedSvg = DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true } });
+          setSvgHtml(sanitizedSvg);
           setRenderError(null);
           setIsRendering(false);
         }

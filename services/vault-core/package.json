@@ -48,7 +48,7 @@
   },
   "dependencies": {
     "@tkxel-vault/types": "workspace:*",
-    "drizzle-orm": "^0.39.3",
+    "drizzle-orm": "^0.45.2",
     "gpt-tokenizer": "^4.0.0",
     "jszip": "^3.10.1",
     "pg": "^8.13.3",
