@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { Page, Vault, VaultRole } from '@tkxel-vault/types';
 import { ActionMenu, ActionMenuItem, Button, Dialog, EmptyState, IconButton } from '../ui/index.js';
+import { Virtuoso } from 'react-virtuoso';
 
 export interface SidebarProps {
   currentVault: Vault;
@@ -353,10 +354,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 className="notes-sidebar__folder-empty"
                 data-dragover={dragOverFolder === folderName}
               >
-                {draggingPageId ? 'Drop agent here to add to folder' : 'No agents in this folder.'}
+                {draggingPageId ? 'Drop item here to add to folder' : 'No items in this folder.'}
               </div>
             ) : (
-              folderNotes.map((page) => renderNoteRow(page))
+              <Virtuoso
+                style={{ height: `${Math.min(folderNotes.length * 36, 400)}px` }}
+                totalCount={folderNotes.length}
+                itemContent={(index) => renderNoteRow(folderNotes[index])}
+              />
             )}
           </div>
         )}
@@ -381,7 +386,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         aria-label="Notes navigation"
       >
         <div className="workspace-sidebar__mobile-header">
-          <strong>Agent Workbench</strong>
+          <strong>Vault Explorer</strong>
           <IconButton variant="quiet" label="Close navigation" icon={<X size={20} />} onClick={onCloseNavigation} />
         </div>
 
@@ -394,7 +399,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onClick={() => closeAfter(() => onCreateNewPage())}
                 style={{ flex: 1, minWidth: 0 }}
               >
-                Draft Agent
+                New Note
               </Button>
               <Button
                 variant="secondary"
@@ -412,7 +417,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span className="sr-only">Search agents and tags</span>
             <input
               type="search"
-              placeholder="Search agents, skills, tags"
+              placeholder="Search items, skills, tags"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
             />
@@ -421,7 +426,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <div className="notes-sidebar__list">
           <div className="notes-sidebar__count">
-            Agent Drafts <span>{visiblePages.length}</span>
+            Vault Items <span>{visiblePages.length}</span>
             {allFolders.length > 0 && <small style={{ marginLeft: 'auto', opacity: 0.7 }}>{allFolders.length} folders</small>}
           </div>
 
@@ -429,12 +434,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <EmptyState
               compact
               icon={<FileText size={20} />}
-              title={searchQuery ? 'No matching agents' : 'No drafts yet'}
-              description={searchQuery ? 'Try a different title or tag.' : 'Start drafting your first agent.'}
-              action={canEdit && !searchQuery ? <Button size="sm" onClick={() => closeAfter(() => onCreateNewPage())}>Draft Agent</Button> : undefined}
+              title={searchQuery ? 'No matching items' : 'No items yet'}
+              description={searchQuery ? 'Try a different title or tag.' : 'Start writing your first note.'}
+              action={canEdit && !searchQuery ? <Button size="sm" onClick={() => closeAfter(() => onCreateNewPage())}>New Note</Button> : undefined}
             />
           ) : (
-            <div className="notes-sidebar__tree">
+            <div className="notes-sidebar__tree" style={{ flex: 1 }}>
               {/* Folder Sections */}
               {folderTree.map((node) => renderFolderNode(node, 0))}
 
@@ -469,7 +474,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       >
                         {collapsedFolders.has('__unfiled__') ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                         <FileText size={14} className="notes-sidebar__folder-icon" />
-                        <strong className="notes-sidebar__folder-name">Unfiled Agents</strong>
+                        <strong className="notes-sidebar__folder-name">Unfiled Items</strong>
                         <span className="notes-sidebar__folder-badge">{unfiledPages.length}</span>
                       </button>
                       {canEdit && (
@@ -477,8 +482,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           <button
                             type="button"
                             className="notes-sidebar__folder-action-btn"
-                            title="Draft unfiled agent"
-                            aria-label="Draft unfiled agent"
+                            title="New Unfiled Item"
+                            aria-label="New Unfiled Item"
                             onClick={(e) => {
                               e.stopPropagation();
                               closeAfter(() => onCreateNewPage());
@@ -493,7 +498,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
                   {(!allFolders.length || !collapsedFolders.has('__unfiled__')) && (
                     <div className={allFolders.length > 0 ? 'notes-sidebar__folder-contents' : ''}>
-                      {unfiledPages.map((page) => renderNoteRow(page))}
+                      <Virtuoso
+                        style={{ height: '300px' }}
+                        totalCount={unfiledPages.length}
+                        itemContent={(index) => renderNoteRow(unfiledPages[index])}
+                      />
                     </div>
                   )}
                 </div>

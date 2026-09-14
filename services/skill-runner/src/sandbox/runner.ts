@@ -1,9 +1,12 @@
 import { spawn } from 'node:child_process';
+import path from 'node:path';
+import { OutputSanitizer } from './sanitizer.js';
 
 export interface SandboxOptions {
   timeoutMs?: number; // Hard execution limit, default 120,000ms (FR-74)
   allowedEnvVars?: string[];
   workingDirectory?: string;
+  useDocker?: boolean;
 }
 
 export interface SandboxExecutionResult {
@@ -61,20 +64,61 @@ export class SandboxRunner {
       }
     }
 
+    const isHostBinary = path.isAbsolute(command) || command.endsWith('.exe') || command === process.execPath;
+    const useDocker = options?.useDocker ?? (process.env.USE_DOCKER_SANDBOX === 'true' && !isHostBinary);
+
     return new Promise((resolve, reject) => {
       let timedOut = false;
 
-      const child = spawn(command, args, {
-        env: sanitizedEnv,
-        cwd: options?.workingDirectory,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      let child: ReturnType<typeof spawn>;
+
+      if (useDocker) {
+        // Construct Docker arguments for strict container sandboxing (FR-73)
+        const dockerArgs = [
+          'run',
+          '--rm',                     // Auto-remove container on exit
+          '--network', 'none',        // No network access by default
+          '--read-only',              // Root filesystem is read-only
+          '--tmpfs', '/tmp',          // Ephemeral tmpfs for working storage
+          '--memory', '256m',         // Memory limit
+          '--cpus', '1.0',            // CPU limit
+          '--user', '1000:1000',      // Non-root execution
+        ];
+
+        // Add sanitized env vars
+        for (const [key, value] of Object.entries(sanitizedEnv)) {
+          dockerArgs.push('-e', `${key}=${value}`);
+        }
+        
+        const imageMap: Record<string, string> = {
+          'python': 'python:3.12-alpine',
+          'python3': 'python:3.12-alpine',
+          'node': 'node:20-alpine',
+        };
+        
+        const image = imageMap[command] || 'alpine:latest';
+        dockerArgs.push(image);
+        dockerArgs.push(command);
+        dockerArgs.push(...args);
+
+        child = spawn('docker', dockerArgs, {
+          cwd: options?.workingDirectory,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+      } else {
+        // Ephemeral isolated host process execution (sanitized environment & hard timeout)
+        child = spawn(command, args, {
+          env: sanitizedEnv,
+          cwd: options?.workingDirectory,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+      }
 
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
 
-      child.stdout.on('data', (chunk) => stdoutChunks.push(chunk));
-      child.stderr.on('data', (chunk) => stderrChunks.push(chunk));
+      if (child.stdout) child.stdout.on('data', (chunk) => stdoutChunks.push(chunk));
+      if (child.stderr) child.stderr.on('data', (chunk) => stderrChunks.push(chunk));
 
       // Hard timeout enforcement (FR-74)
       const timer = setTimeout(() => {
@@ -90,8 +134,11 @@ export class SandboxRunner {
       child.on('close', (code) => {
         clearTimeout(timer);
         const durationMs = Date.now() - startTime;
-        const stdout = Buffer.concat(stdoutChunks).toString('utf-8');
-        const stderr = Buffer.concat(stderrChunks).toString('utf-8');
+        const rawStdout = Buffer.concat(stdoutChunks).toString('utf-8');
+        const rawStderr = Buffer.concat(stderrChunks).toString('utf-8');
+        
+        const stdout = OutputSanitizer.sanitize(rawStdout);
+        const stderr = OutputSanitizer.sanitize(rawStderr);
 
         if (timedOut) {
           resolve({

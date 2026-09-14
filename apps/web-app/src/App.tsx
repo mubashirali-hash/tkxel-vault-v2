@@ -4,16 +4,18 @@ import { Vault, VaultRole, Page, PageType, TimelineEntry, AuditEvent, Share } fr
 import { MarkdownEngine, ImportResult } from '@tkxel-vault/vault-core/markdown';
 import { AppShell } from './components/layout/AppShell.js';
 import { Sidebar } from './components/navigation/Sidebar.js';
+import { Suspense } from 'react';
 import { MarkdownEditor } from './components/editor/MarkdownEditor.js';
-import { KnowledgeGraph } from './components/graph/KnowledgeGraph.js';
-import { AuditViewer } from './components/audit/AuditViewer.js';
-import { SharingModal } from './components/sharing/SharingModal.js';
-import { ExportModal } from './components/export/ExportModal.js';
-import { ImporterModal } from './components/ingestion/ImporterModal.js';
-import { AddSkillModal, SkillItem } from './components/skills/AddSkillModal.js';
-import { ConvertNoteToSkillModal } from './components/skills/ConvertNoteToSkillModal.js';
-import { McpConnectModal } from './components/mcp/McpConnectModal.js';
-import { loadVaultState, saveVaultState, addVaultShareApi, revokeVaultShareApi } from './utils/storage.js';
+const KnowledgeGraph = React.lazy(() => import('./components/graph/KnowledgeGraph.js').then(m => ({ default: m.KnowledgeGraph })));
+const AuditViewer = React.lazy(() => import('./components/audit/AuditViewer.js').then(m => ({ default: m.AuditViewer })));
+const SharingModal = React.lazy(() => import('./components/sharing/SharingModal.js').then(m => ({ default: m.SharingModal })));
+const ExportModal = React.lazy(() => import('./components/export/ExportModal.js').then(m => ({ default: m.ExportModal })));
+const ImporterModal = React.lazy(() => import('./components/ingestion/ImporterModal.js').then(m => ({ default: m.ImporterModal })));
+const AddSkillModal = React.lazy(() => import('./components/skills/AddSkillModal.js').then(m => ({ default: m.AddSkillModal })));
+const ConvertNoteToSkillModal = React.lazy(() => import('./components/skills/ConvertNoteToSkillModal.js').then(m => ({ default: m.ConvertNoteToSkillModal })));
+const McpConnectModal = React.lazy(() => import('./components/mcp/McpConnectModal.js').then(m => ({ default: m.McpConnectModal })));
+import { SkillItem } from './components/skills/AddSkillModal.js';
+import { loadVaultData, addVaultShareApi, revokeVaultShareApi } from './utils/storage.js';
 import { Lock, Sparkles, Plus, Copy, Check, Terminal, ShieldCheck, FileText, Trash2 } from 'lucide-react';
 import { GoogleOAuthProvider, GoogleLogin, CredentialResponse } from '@react-oauth/google';
 import { jwtDecode } from 'jwt-decode';
@@ -190,7 +192,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     // Initial load state
     const userId = userInfo?.email || 'usr_admin';
-    loadVaultState(userId).then((savedState) => {
+    loadVaultData(currentVault.id, userId).then((savedState: any) => {
       if (savedState) {
         setPages(savedState.pages || []);
         setActivePageId(savedState.pages && savedState.pages.length > 0 ? savedState.pages[0].id : '');
@@ -248,16 +250,6 @@ export const App: React.FC = () => {
   // Auto-save state to localStorage whenever modified
   useEffect(() => {
     if (!isLoaded) return;
-    const userId = userInfo?.email || 'usr_admin';
-    saveVaultState({
-      pages,
-      links,
-      shares,
-      auditEvents,
-      lockedSkills,
-      timelineEntries,
-      currentRole: currentRole || 'reader',
-    }, userId, currentVault.id);
   }, [isLoaded, pages, links, shares, auditEvents, lockedSkills, timelineEntries, currentRole, currentVault.id, userInfo?.email]);
 
   // Ensure activePageId points to a valid page in current vault
@@ -332,7 +324,7 @@ export const App: React.FC = () => {
     };
     setAuditEvents([audit, ...auditEvents]);
 
-    saveVaultState({ pages: nextPages, links: [...links, ...newLinks], lockedSkills, auditEvents: [audit, ...auditEvents], shares, timelineEntries });
+    // Global state sync is handled by resource-oriented APIs
   };
 
   const handleCreateNewPage = (targetFolder?: string) => {
@@ -558,11 +550,24 @@ export const App: React.FC = () => {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${ssoToken}`,
         },
-        body: JSON.stringify({ content: updated.content, vault_id: currentVault.id }),
+        body: JSON.stringify({ 
+          content: updated.content, 
+          vault_id: currentVault.id,
+          updated_at: activePage.updated_at?.toISOString() // Optimistic Concurrency Control
+        }),
       });
       if (!res.ok) {
-        console.error('Failed to save version to DB:', await res.text());
-        // Handle gracefully
+        if (res.status === 409) {
+          alert('Conflict: This page was modified by another user. Please refresh to see their changes before saving your own.');
+        } else {
+          console.error('Failed to save version to DB:', await res.text());
+        }
+      } else {
+        const data = await res.json();
+        if (data.updated_at) {
+          // Sync our local page updated_at with the server's new one
+          setPages((prev) => prev.map((p) => p.id === activePage.id ? { ...p, updated_at: new Date(data.updated_at) } : p));
+        }
       }
     } catch (err) {
       console.error('Network error saving version:', err);
@@ -800,15 +805,7 @@ export const App: React.FC = () => {
     setAuditEvents(nextAudits);
 
     // Immediate synchronous browser persistence & API background sync
-    saveVaultState({
-      pages: combinedPages,
-      links: [...links, ...importedLinks],
-      shares,
-      auditEvents: nextAudits,
-      lockedSkills,
-      timelineEntries,
-      currentRole: currentRole || 'reader',
-    }, userInfo?.email || 'usr_admin', currentVault.id);
+    // Global state sync is handled by resource-oriented APIs
   };
 
   // Real JSZip Packaging & Download (DEF-01)
@@ -1204,16 +1201,18 @@ export const App: React.FC = () => {
 
       {/* OPEN VAULT: 2D KNOWLEDGE GRAPH TAB */}
       {!isLocked && currentTab === 'graph' && (
-        <KnowledgeGraph
-          pages={vaultPages}
-          links={links}
-          activePageId={activePageId || undefined}
-          onSelectPage={(pageId) => {
-            setActivePageId(pageId);
-            setCurrentTab('editor');
-          }}
-          onLinkPages={handleLinkPages}
-        />
+        <Suspense fallback={<div className="loading-state">Loading graph...</div>}>
+          <KnowledgeGraph
+            pages={vaultPages}
+            links={links}
+            activePageId={activePageId || undefined}
+            onSelectPage={(pageId) => {
+              setActivePageId(pageId);
+              setCurrentTab('editor');
+            }}
+            onLinkPages={handleLinkPages}
+          />
+        </Suspense>
       )}
 
       {/* LOCKED VAULT: DEDICATED ZERO-READ SKILLS CATALOG VIEW (DEF-06) */}
@@ -1448,122 +1447,136 @@ export const App: React.FC = () => {
 
       {/* AUDIT TRAIL TAB */}
       {currentTab === 'audit' && (
-        <AuditViewer
-          events={auditEvents}
-          onExportCsv={handleExportCsv}
-          knownNames={Object.fromEntries([
-            [currentVault.id, currentVault.name],
-            ...vaultPages.map((page) => [page.id, page.title]),
-            ...lockedSkills.map((skill) => [skill.id, skill.name]),
-            ...shares.map((share) => [share.principal_id, share.principal_id]),
-            ['usr_admin', userInfo?.name || 'Vault owner'],
-          ])}
-        />
+        <Suspense fallback={<div className="loading-state">Loading audits...</div>}>
+          <AuditViewer
+            events={auditEvents}
+            onExportCsv={handleExportCsv}
+            knownNames={Object.fromEntries([
+              [currentVault.id, currentVault.name],
+              ...vaultPages.map((page) => [page.id, page.title]),
+              ...lockedSkills.map((skill) => [skill.id, skill.name]),
+              ...shares.map((share) => [share.principal_id, share.principal_id]),
+              ['usr_admin', userInfo?.name || 'Vault owner'],
+            ])}
+          />
+        </Suspense>
       )}
 
       {/* MODALS */}
-      <SharingModal
-        isOpen={isShareOpen}
-        vault={currentVault}
-        currentRole={currentRole}
-        shares={shares}
-        onClose={() => setIsShareOpen(false)}
-        onAddShare={async (principalId, role) => {
-          const userEmail = userInfo?.email || 'usr_admin';
-          // Persist to PostgreSQL backend
-          const apiShare = await addVaultShareApi(
-            currentVault.id,
-            principalId,
-            role,
-            userEmail,
-            ssoToken
-          );
-
-          const newShare: Share = apiShare || {
-            id: crypto.randomUUID(),
-            vault_id: currentVault.id,
-            principal_id: principalId.toLowerCase().trim(),
-            role,
-            granted_by: userEmail,
-            granted_at: new Date(),
-          };
-
-          setShares((prev) => {
-            const filtered = prev.filter(
-              (s) =>
-                !(
-                  s.vault_id === currentVault.id &&
-                  s.principal_id.toLowerCase().trim() === principalId.toLowerCase().trim()
-                )
+      <Suspense fallback={null}>
+        <SharingModal
+          isOpen={isShareOpen}
+          vault={currentVault}
+          currentRole={currentRole}
+          shares={shares}
+          onClose={() => setIsShareOpen(false)}
+          onAddShare={async (principalId, role) => {
+            const userEmail = userInfo?.email || 'usr_admin';
+            // Persist to PostgreSQL backend
+            const apiShare = await addVaultShareApi(
+              currentVault.id,
+              principalId,
+              role,
+              userEmail,
+              ssoToken
             );
-            return [...filtered, newShare];
-          });
 
-          // Audit record for sharing (DEF-08)
-          const audit: AuditEvent = {
-            id: crypto.randomUUID(),
-            actor_id: userEmail,
-            action: 'share_vault',
-            target_id: currentVault.id,
-            timestamp: new Date(),
-            metadata: { principal_id: principalId, role },
-          };
-          setAuditEvents((prev) => [audit, ...prev]);
-        }}
-        onRevokeShare={async (shareId) => {
-          const userEmail = userInfo?.email || 'usr_admin';
-          // Revoke in PostgreSQL backend
-          await revokeVaultShareApi(currentVault.id, shareId, userEmail, ssoToken);
+            const newShare: Share = apiShare || {
+              id: crypto.randomUUID(),
+              vault_id: currentVault.id,
+              principal_id: principalId.toLowerCase().trim(),
+              role,
+              granted_by: userEmail,
+              granted_at: new Date(),
+            };
 
-          const share = shares.find((s) => s.id === shareId);
-          setShares((prev) => prev.filter((s) => s.id !== shareId));
+            setShares((prev) => {
+              const filtered = prev.filter(
+                (s) =>
+                  !(
+                    s.vault_id === currentVault.id &&
+                    s.principal_id.toLowerCase().trim() === principalId.toLowerCase().trim()
+                  )
+              );
+              return [...filtered, newShare];
+            });
 
-          // Audit record for revocation (DEF-08)
-          const audit: AuditEvent = {
-            id: crypto.randomUUID(),
-            actor_id: userEmail,
-            action: 'revoke_vault',
-            target_id: currentVault.id,
-            timestamp: new Date(),
-            metadata: { principal_id: share?.principal_id, role: share?.role },
-          };
-          setAuditEvents((prev) => [audit, ...prev]);
-        }}
-      />
+            // Audit record for sharing (DEF-08)
+            const audit: AuditEvent = {
+              id: crypto.randomUUID(),
+              actor_id: userEmail,
+              action: 'share_vault',
+              target_id: currentVault.id,
+              timestamp: new Date(),
+              metadata: { principal_id: principalId, role },
+            };
+            setAuditEvents((prev) => [audit, ...prev]);
+          }}
+          onRevokeShare={async (shareId) => {
+            const userEmail = userInfo?.email || 'usr_admin';
+            // Revoke in PostgreSQL backend
+            await revokeVaultShareApi(currentVault.id, shareId, userEmail, ssoToken);
 
-      <ExportModal
-        isOpen={isExportOpen}
-        vault={currentVault}
-        currentRole={currentRole}
-        onClose={() => setIsExportOpen(false)}
-        onConfirmExport={handleConfirmExport}
-      />
+            const share = shares.find((s) => s.id === shareId);
+            setShares((prev) => prev.filter((s) => s.id !== shareId));
 
-      <ImporterModal
-        isOpen={isImportOpen}
-        onClose={() => setIsImportOpen(false)}
-        onImportComplete={handleImportComplete}
-      />
+            // Audit record for revocation (DEF-08)
+            const audit: AuditEvent = {
+              id: crypto.randomUUID(),
+              actor_id: userEmail,
+              action: 'revoke_vault',
+              target_id: currentVault.id,
+              timestamp: new Date(),
+              metadata: { principal_id: share?.principal_id, role: share?.role },
+            };
+            setAuditEvents((prev) => [audit, ...prev]);
+          }}
+        />
+      </Suspense>
 
-      <AddSkillModal
-        isOpen={isAddSkillOpen}
-        onClose={() => setIsAddSkillOpen(false)}
-        onAddSkill={handleCreateSkill}
-      />
+      <Suspense fallback={null}>
+        <ExportModal
+          isOpen={isExportOpen}
+          vault={currentVault}
+          currentRole={currentRole}
+          onClose={() => setIsExportOpen(false)}
+          onConfirmExport={handleConfirmExport}
+        />
+      </Suspense>
 
-      <ConvertNoteToSkillModal
-        isOpen={isConvertToSkillOpen}
-        note={noteToConvert}
-        lockedVaults={vaults.filter((v) => v.mode === 'locked')}
-        onClose={() => setIsConvertToSkillOpen(false)}
-        onConvert={handleConvertNoteToSkill}
-      />
+      <Suspense fallback={null}>
+        <ImporterModal
+          isOpen={isImportOpen}
+          onClose={() => setIsImportOpen(false)}
+          onImportComplete={handleImportComplete}
+        />
+      </Suspense>
 
-      <McpConnectModal
-        isOpen={isMcpOpen}
-        currentVault={currentVault}
-        onClose={() => setIsMcpOpen(false)}
-      />
+      <Suspense fallback={null}>
+        <AddSkillModal
+          isOpen={isAddSkillOpen}
+          onClose={() => setIsAddSkillOpen(false)}
+          onAddSkill={handleCreateSkill}
+        />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <ConvertNoteToSkillModal
+          isOpen={isConvertToSkillOpen}
+          note={noteToConvert}
+          lockedVaults={vaults.filter((v) => v.mode === 'locked')}
+          onClose={() => setIsConvertToSkillOpen(false)}
+          onConvert={handleConvertNoteToSkill}
+        />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <McpConnectModal
+          isOpen={isMcpOpen}
+          currentVault={currentVault}
+          onClose={() => setIsMcpOpen(false)}
+        />
+      </Suspense>
     </AppShell>
     </GoogleOAuthProvider>
   );

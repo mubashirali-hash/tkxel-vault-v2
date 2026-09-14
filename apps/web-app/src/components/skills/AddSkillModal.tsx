@@ -18,6 +18,7 @@ export interface SkillItem {
 
 export interface AddSkillModalProps {
   isOpen: boolean;
+  currentVault?: import('@tkxel-vault/types').Vault;
   onClose: () => void;
   onAddSkill: (skill: Omit<SkillItem, 'id' | 'created_at'>) => void;
 }
@@ -26,6 +27,7 @@ type TabMode = 'manual' | 'upload';
 
 export const AddSkillModal: React.FC<AddSkillModalProps> = ({
   isOpen,
+  currentVault,
   onClose,
   onAddSkill,
 }) => {
@@ -432,8 +434,19 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
                 color: 'var(--text-secondary)',
               }}
             >
-              <ShieldCheck size={16} color="var(--tk-primary)" />
-              <span>Encrypted at rest with AES-256-GCM. Source code is never exposed to Claude users.</span>
+              {(() => {
+                const isEncrypted = Boolean(currentVault?.data_key_id);
+                return (
+                  <>
+                    <ShieldCheck size={16} color={isEncrypted ? "var(--tk-primary)" : "#9CA3AF"} />
+                    <span>
+                      {isEncrypted 
+                        ? "Encrypted at rest with AES-256-GCM (KMS secured). Source code is never exposed to Claude users." 
+                        : "Warning: Target vault does not have an active KMS data key."}
+                    </span>
+                  </>
+                );
+              })()}
             </div>
 
             {/* Actions */}
@@ -565,6 +578,7 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
               </div>
             )}
             
+            {/* Security Notice */}
             <div
               style={{
                 padding: '10px 12px',
@@ -578,8 +592,19 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
                 color: 'var(--text-secondary)',
               }}
             >
-              <ShieldCheck size={16} color="var(--tk-primary)" />
-              <span>Skill resources and scripts will be securely stored and never exposed to consumers.</span>
+              {(() => {
+                const isEncrypted = Boolean(currentVault?.data_key_id);
+                return (
+                  <>
+                    <ShieldCheck size={16} color={isEncrypted ? "var(--tk-primary)" : "#9CA3AF"} />
+                    <span>
+                      {isEncrypted 
+                        ? "Encrypted at rest with AES-256-GCM (KMS secured). Source code is never exposed to Claude users." 
+                        : "Warning: Target vault does not have an active KMS data key."}
+                    </span>
+                  </>
+                );
+              })()}
             </div>
           </div>
         )}

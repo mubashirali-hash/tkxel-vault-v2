@@ -416,8 +416,20 @@ export const ConvertNoteToSkillModal: React.FC<ConvertNoteToSkillModalProps> = (
               color: 'var(--text-secondary)',
             }}
           >
-            <ShieldCheck size={16} color="var(--tk-primary)" />
-            <span>Encrypted at rest with AES-256-GCM. Source code is never exposed to Claude users.</span>
+            {(() => {
+              const selectedVault = lockedVaults.find(v => v.id === targetVaultId);
+              const isEncrypted = Boolean(selectedVault?.data_key_id);
+              return (
+                <>
+                  <ShieldCheck size={16} color={isEncrypted ? "var(--tk-primary)" : "#9CA3AF"} />
+                  <span>
+                    {isEncrypted 
+                      ? "Encrypted at rest with AES-256-GCM (KMS secured). Source code is never exposed to Claude users." 
+                      : "Warning: Target vault does not have an active KMS data key."}
+                  </span>
+                </>
+              );
+            })()}
           </div>
 
           {/* Actions */}

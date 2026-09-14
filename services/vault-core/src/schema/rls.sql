@@ -56,35 +56,56 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Policy: Vaults are accessible if user is owner or has a share
-CREATE POLICY vaults_access_policy ON vaults
-    FOR ALL
-    USING (owner_id = current_setting('app.current_user_id', true) OR has_vault_access(id, 'consumer'));
+-- Drop old policies if they exist (to be safe if running multiple times)
+DROP POLICY IF EXISTS vaults_access_policy ON vaults;
+DROP POLICY IF EXISTS pages_access_policy ON pages;
+DROP POLICY IF EXISTS versions_access_policy ON versions;
+DROP POLICY IF EXISTS chunks_access_policy ON chunks;
+DROP POLICY IF EXISTS skills_access_policy ON skills;
+DROP POLICY IF EXISTS links_access_policy ON links;
+DROP POLICY IF EXISTS shares_access_policy ON shares;
 
--- Policy: Pages are accessible only if user has reader/editor/owner access
-CREATE POLICY pages_access_policy ON pages
-    FOR ALL
-    USING (has_vault_access(vault_id, 'reader'));
+-- Vaults
+CREATE POLICY vaults_select ON vaults FOR SELECT USING (owner_id = current_setting('app.current_user_id', true) OR has_vault_access(id, 'consumer'));
+CREATE POLICY vaults_insert ON vaults FOR INSERT WITH CHECK (owner_id = current_setting('app.current_user_id', true));
+CREATE POLICY vaults_update ON vaults FOR UPDATE USING (owner_id = current_setting('app.current_user_id', true));
+CREATE POLICY vaults_delete ON vaults FOR DELETE USING (owner_id = current_setting('app.current_user_id', true));
 
--- Policy: Versions accessible only if user has reader/editor/owner access
-CREATE POLICY versions_access_policy ON versions
-    FOR ALL
-    USING (EXISTS (
-        SELECT 1 FROM pages p 
-        WHERE p.id = versions.page_id 
-          AND has_vault_access(p.vault_id, 'reader')
-    ));
+-- Pages
+CREATE POLICY pages_select ON pages FOR SELECT USING (has_vault_access(vault_id, 'reader'));
+CREATE POLICY pages_insert ON pages FOR INSERT WITH CHECK (has_vault_access(vault_id, 'editor'));
+CREATE POLICY pages_update ON pages FOR UPDATE USING (has_vault_access(vault_id, 'editor'));
+CREATE POLICY pages_delete ON pages FOR DELETE USING (has_vault_access(vault_id, 'editor'));
 
--- Policy: Chunks accessible under reader or consumer execution context
-CREATE POLICY chunks_access_policy ON chunks
-    FOR ALL
-    USING (EXISTS (
-        SELECT 1 FROM pages p 
-        WHERE p.id = chunks.page_id 
-          AND has_vault_access(p.vault_id, 'consumer')
-    ));
+-- Versions
+CREATE POLICY versions_select ON versions FOR SELECT USING (EXISTS (SELECT 1 FROM pages p WHERE p.id = versions.page_id AND has_vault_access(p.vault_id, 'reader')));
+CREATE POLICY versions_insert ON versions FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM pages p WHERE p.id = versions.page_id AND has_vault_access(p.vault_id, 'editor')));
+CREATE POLICY versions_update ON versions FOR UPDATE USING (EXISTS (SELECT 1 FROM pages p WHERE p.id = versions.page_id AND has_vault_access(p.vault_id, 'editor')));
+CREATE POLICY versions_delete ON versions FOR DELETE USING (EXISTS (SELECT 1 FROM pages p WHERE p.id = versions.page_id AND has_vault_access(p.vault_id, 'editor')));
 
--- Policy: Skills accessible under consumer or editor/owner access
-CREATE POLICY skills_access_policy ON skills
-    FOR ALL
-    USING (has_vault_access(vault_id, 'consumer'));
+-- Chunks
+CREATE POLICY chunks_select ON chunks FOR SELECT USING (EXISTS (SELECT 1 FROM pages p WHERE p.id = chunks.page_id AND has_vault_access(p.vault_id, 'consumer')));
+CREATE POLICY chunks_insert ON chunks FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM pages p WHERE p.id = chunks.page_id AND has_vault_access(p.vault_id, 'editor')));
+CREATE POLICY chunks_update ON chunks FOR UPDATE USING (EXISTS (SELECT 1 FROM pages p WHERE p.id = chunks.page_id AND has_vault_access(p.vault_id, 'editor')));
+CREATE POLICY chunks_delete ON chunks FOR DELETE USING (EXISTS (SELECT 1 FROM pages p WHERE p.id = chunks.page_id AND has_vault_access(p.vault_id, 'editor')));
+
+-- Skills
+CREATE POLICY skills_select ON skills FOR SELECT USING (has_vault_access(vault_id, 'consumer'));
+CREATE POLICY skills_insert ON skills FOR INSERT WITH CHECK (has_vault_access(vault_id, 'editor'));
+CREATE POLICY skills_update ON skills FOR UPDATE USING (has_vault_access(vault_id, 'editor'));
+CREATE POLICY skills_delete ON skills FOR DELETE USING (has_vault_access(vault_id, 'editor'));
+
+-- Links
+CREATE POLICY links_select ON links FOR SELECT USING (EXISTS (SELECT 1 FROM pages p WHERE p.id = links.from_page_id AND has_vault_access(p.vault_id, 'reader')));
+CREATE POLICY links_insert ON links FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM pages p WHERE p.id = links.from_page_id AND has_vault_access(p.vault_id, 'editor')));
+CREATE POLICY links_update ON links FOR UPDATE USING (EXISTS (SELECT 1 FROM pages p WHERE p.id = links.from_page_id AND has_vault_access(p.vault_id, 'editor')));
+CREATE POLICY links_delete ON links FOR DELETE USING (EXISTS (SELECT 1 FROM pages p WHERE p.id = links.from_page_id AND has_vault_access(p.vault_id, 'editor')));
+
+-- Shares
+CREATE POLICY shares_select ON shares FOR SELECT USING (
+    EXISTS (SELECT 1 FROM vaults v WHERE v.id = shares.vault_id AND v.owner_id = current_setting('app.current_user_id', true))
+    OR principal_id = current_setting('app.current_user_id', true)
+);
+CREATE POLICY shares_insert ON shares FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM vaults v WHERE v.id = shares.vault_id AND v.owner_id = current_setting('app.current_user_id', true)));
+CREATE POLICY shares_update ON shares FOR UPDATE USING (EXISTS (SELECT 1 FROM vaults v WHERE v.id = shares.vault_id AND v.owner_id = current_setting('app.current_user_id', true)));
+CREATE POLICY shares_delete ON shares FOR DELETE USING (EXISTS (SELECT 1 FROM vaults v WHERE v.id = shares.vault_id AND v.owner_id = current_setting('app.current_user_id', true)));

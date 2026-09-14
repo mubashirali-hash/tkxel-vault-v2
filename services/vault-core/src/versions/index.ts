@@ -1,9 +1,9 @@
 import { eq, and, desc } from 'drizzle-orm';
 import { db } from '../db.js';
 import { versions, pages, vaults } from '../schema/index.js';
-import { MockKmsProvider, EnvelopeEncryption } from '../crypto/kms.js';
+import { createKmsProvider, EnvelopeEncryption } from '../crypto/kms.js';
 
-export async function saveDraft(pageId: string, content: string, authorId: string) {
+export async function saveDraft(pageId: string, content: string, authorId: string, expectedUpdatedAt?: string) {
   // Check if there's already a draft
   const existingDrafts = await db.select()
     .from(versions)
@@ -22,22 +22,41 @@ export async function saveDraft(pageId: string, content: string, authorId: strin
     
   const nextNumber = allVersions.length > 0 ? allVersions[0].number + 1 : 1;
 
-  // Get Vault DEK for encryption
+  // Get Vault DEK for encryption & check page's updated_at
   const pageRec = await db.select().from(pages).where(eq(pages.id, pageId)).limit(1);
   if (!pageRec[0]) throw new Error('Page not found');
+
+  if (expectedUpdatedAt) {
+    const currentUpdatedAt = pageRec[0].updated_at?.toISOString();
+    // If the client's expected updated_at doesn't match the DB, it's a conflict
+    if (currentUpdatedAt && currentUpdatedAt !== expectedUpdatedAt) {
+      const conflictError = new Error('Conflict: Page was modified by another user.');
+      (conflictError as any).status = 409;
+      throw conflictError;
+    }
+  }
+
   const vaultRec = await db.select().from(vaults).where(eq(vaults.id, pageRec[0].vault_id)).limit(1);
   if (!vaultRec[0]) throw new Error('Vault not found');
   
-  const kms = new MockKmsProvider();
+  const kms = createKmsProvider();
   const dek = await kms.unwrapKey(vaultRec[0].data_key_id);
   const encryptedBlob = EnvelopeEncryption.encrypt(content, dek);
 
+  const newUpdatedAt = new Date();
+
+  // Update page's updated_at
+  await db.update(pages)
+    .set({ updated_at: newUpdatedAt })
+    .where(eq(pages.id, pageId));
+
+  let draftId;
   if (latestDraft) {
     // Overwrite existing draft
     await db.update(versions)
-      .set({ encrypted_blob: encryptedBlob, created_by: authorId, created_at: new Date() })
+      .set({ encrypted_blob: encryptedBlob, created_by: authorId, created_at: newUpdatedAt })
       .where(eq(versions.id, latestDraft.id));
-    return latestDraft.id;
+    draftId = latestDraft.id;
   } else {
     // Create new draft
     const inserted = await db.insert(versions).values({
@@ -45,10 +64,13 @@ export async function saveDraft(pageId: string, content: string, authorId: strin
       number: nextNumber,
       status: 'draft',
       encrypted_blob: encryptedBlob,
-      created_by: authorId
+      created_by: authorId,
+      created_at: newUpdatedAt
     }).returning({ id: versions.id });
-    return inserted[0].id;
+    draftId = inserted[0].id;
   }
+  
+  return { draftId, updated_at: newUpdatedAt.toISOString() };
 }
 
 export async function publishVersion(pageId: string, authorId: string) {

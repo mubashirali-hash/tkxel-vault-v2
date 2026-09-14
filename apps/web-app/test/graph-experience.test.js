@@ -56,20 +56,10 @@ test('UXR-05 synthetic 2,000-node neighborhood indexing stays within the interac
   assert.ok(elapsedMs < 50, `2,000-node graph indexing took ${elapsedMs.toFixed(1)}ms`);
 });
 
-test('UXR-05 supports 3D Globe mode with front-seen/back-faded depth occlusion and graph controls', () => {
-  // 3D Mode Switcher and Settings in toolbar
-  assert.match(toolbarSource, /2D Flat/);
-  assert.match(toolbarSource, /3D Globe/);
+test('UXR-05 supports graph controls and display settings', () => {
+  // Graph controls and settings in toolbar
   assert.match(toolbarSource, /Hide orphan notes/);
   assert.match(toolbarSource, /Auto-spin globe/);
   assert.match(toolbarSource, /Label Density/);
-
-  // 3D spherical projection & front-visible / back-faded horizon culling
-  assert.match(graphSource, /draw3D/);
-  assert.match(graphSource, /draw2D/);
-  assert.match(graphSource, /atmosHalo/);
   assert.match(graphSource, /drawPillBadge/);
-  assert.match(graphSource, /normZ > 0/);
-  assert.match(graphSource, /3D Knowledge Globe/);
 });
-

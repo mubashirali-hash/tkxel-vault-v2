@@ -1,3 +1,5 @@
+import { encode, decode } from 'gpt-tokenizer';
+
 export interface SearchResultItem {
   id: string;
   pageId: string;
@@ -122,13 +124,14 @@ export class HybridSearchEngine {
       }
     }
 
-    // Token estimation (approx 4 chars per token)
-    let totalTokenEstimate = Math.ceil(markdown.length / 4);
+    // Exact token counting via tokenizer
+    const tokens = encode(markdown);
+    let totalTokenEstimate = tokens.length;
 
     // Enforce maxTokens truncation if exceeded
     if (totalTokenEstimate > maxTokens) {
-      const maxChars = maxTokens * 4;
-      markdown = markdown.slice(0, maxChars) + '\n\n... [Context truncated to token budget]';
+      const truncatedTokens = tokens.slice(0, maxTokens - 10); // leave room for notice
+      markdown = decode(truncatedTokens) + '\n\n... [Context truncated to token budget]';
       totalTokenEstimate = maxTokens;
     }
 

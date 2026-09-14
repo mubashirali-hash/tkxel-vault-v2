@@ -68,27 +68,28 @@ export const ASK_VAULT_TOOL: McpToolDefinition = {
 };
 
 const FORBIDDEN_PATTERNS = [
-  /system\s*prompt/i,
-  /SKILL\.md/i,
-  /tool\.json/i,
-  /\/vaults\/[a-zA-Z0-9_\-\/]+/i,
-  /AES-256-GCM/i,
-  /data_key_id/i,
-  /dek\s*key/i,
+  /system\s*prompt/gi,
+  /SKILL\.md/gi,
+  /tool\.json/gi,
+  /\/vaults\/[a-zA-Z0-9_\-\/]+/gi,
+  /AES-256-GCM/gi,
+  /data_key_id/gi,
+  /dek\s*key/gi,
 ];
 
 function sanitizeOutput(output: string, secretInstructions?: string): string {
   let text = output;
-  if (secretInstructions && secretInstructions.length > 30) {
-    const excerpt = secretInstructions.slice(0, 60).trim();
-    if (text.includes(excerpt)) {
-      text = text.replace(excerpt, '[Internal instruction excerpt redacted by tkxel Vault anti-exfiltration filter]');
+  if (secretInstructions && secretInstructions.length > 20) {
+    const chunkSize = 25;
+    for (let i = 0; i <= secretInstructions.length - chunkSize; i += 15) {
+      const chunk = secretInstructions.slice(i, i + chunkSize).trim();
+      if (chunk.length >= 15 && text.includes(chunk)) {
+        text = text.replaceAll(chunk, '[Internal instruction excerpt redacted by tkxel Vault anti-exfiltration filter]');
+      }
     }
   }
   for (const pattern of FORBIDDEN_PATTERNS) {
-    if (pattern.test(text)) {
-      text = text.replace(pattern, '[Internal system reference redacted]');
-    }
+    text = text.replace(pattern, '[Internal system reference redacted]');
   }
   return text;
 }
@@ -278,12 +279,14 @@ async function executeSkillInSandbox(params: {
 
 ---
 
-### Synthesized Output
-${
-  instructions
-    ? instructions.replace(/^#+\s+/gm, '### ')
-    : 'The requested skill executed successfully within the isolated sandbox environment.'
-}
+### Synthesized Domain Output
+The proprietary skill **${skillName}** was executed successfully inside the zero-read isolated runtime.
+The input parameters were validated and processed against the locked domain model.
+
+**Execution Summary:**
+- Target Domain: ${description}
+- Operational Status: Validated & Applied
+- Security Baseline: In-memory execution; raw instructions and prompt templates remain cryptographically protected.
 
 **Input Arguments Processed:**
 \`\`\`json

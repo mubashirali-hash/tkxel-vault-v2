@@ -726,9 +726,13 @@ export const McpConnectModal: React.FC<McpConnectModalProps> = ({
             justifyContent: 'space-between',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-            <Shield size={13} color="var(--tk-primary)" />
-            <span>Corporate SSO & AES-256-GCM Cryptographic Boundary Enforced</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem', color: currentVault.data_key_id ? 'var(--tk-primary)' : '#9CA3AF' }}>
+            <Shield size={13} color={currentVault.data_key_id ? "var(--tk-primary)" : "#9CA3AF"} />
+            <span>
+              {currentVault.data_key_id 
+                ? "Corporate SSO & AES-256-GCM Cryptographic Boundary Enforced"
+                : "Warning: Target vault does not have an active KMS data key."}
+            </span>
           </div>
 
           <button onClick={onClose} className="btn btn-secondary-white" style={{ padding: '6px 14px', fontSize: '0.78rem' }}>

@@ -64,6 +64,8 @@ body {
   justify-content: center;
   gap: 6px;
   padding: 6px 12px;
+  min-height: 44px;
+  min-width: 44px;
   font-family: var(--font-sans);
   font-size: 0.8125rem;
   font-weight: 600;

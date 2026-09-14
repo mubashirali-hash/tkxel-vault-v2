@@ -1,7 +1,7 @@
 import { Page, Share, AuditEvent, TimelineEntry, VaultRole } from '@tkxel-vault/types';
 import { SkillItem } from '../components/skills/AddSkillModal.js';
 
-export interface PersistedVaultState {
+export interface VaultData {
   pages: Page[];
   links: Array<{ from_page_id: string; to_page_id: string }>;
   shares: Share[];
@@ -11,169 +11,79 @@ export interface PersistedVaultState {
   currentRole?: VaultRole;
 }
 
-const STORAGE_KEY = 'tkxel_vault_storage_v1';
 const API_URL = 'http://localhost:3002/api';
 
-function reviveState(parsed: any): PersistedVaultState {
-  const result: PersistedVaultState = {
-    pages: [],
-    links: [],
-    shares: [],
-    auditEvents: [],
-    lockedSkills: [],
-    timelineEntries: [],
-    currentRole: parsed.currentRole,
-  };
+export async function loadVaultData(vaultId: string, userId: string = 'usr_admin'): Promise<VaultData | null> {
+  const token = localStorage.getItem('ssoToken');
+  const headers: Record<string, string> = { 'x-user-id': userId };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  if (Array.isArray(parsed.pages)) {
-    result.pages = parsed.pages.map((p: Page) => ({
-      ...p,
-      folder: p.folder || (p.front_matter?.folder as string) || undefined,
-      created_at: new Date(p.created_at),
-      updated_at: p.updated_at ? new Date(p.updated_at) : undefined,
-    }));
+  try {
+    const [pagesRes, linksRes, skillsRes, timelineRes, sharesRes, auditsRes] = await Promise.all([
+      fetch(`${API_URL}/vaults/${vaultId}/pages`, { headers }).catch(() => null),
+      fetch(`${API_URL}/vaults/${vaultId}/links`, { headers }).catch(() => null),
+      fetch(`${API_URL}/vaults/${vaultId}/skills`, { headers }).catch(() => null),
+      fetch(`${API_URL}/vaults/${vaultId}/timeline`, { headers }).catch(() => null),
+      fetch(`${API_URL}/vaults/${vaultId}/shares`, { headers }).catch(() => null),
+      fetch(`${API_URL}/vaults/${vaultId}/audits`, { headers }).catch(() => null),
+    ]);
+
+    const [pagesData, linksData, skillsData, timelineData, sharesData, auditsData] = await Promise.all([
+      pagesRes?.ok ? pagesRes.json() : { pages: [] },
+      linksRes?.ok ? linksRes.json() : { links: [] },
+      skillsRes?.ok ? skillsRes.json() : { lockedSkills: [] },
+      timelineRes?.ok ? timelineRes.json() : { timelineEntries: [] },
+      sharesRes?.ok ? sharesRes.json() : { shares: [] },
+      auditsRes?.ok ? auditsRes.json() : { auditEvents: [] },
+    ]);
+
+    return {
+      pages: (pagesData.pages || []).map((p: any) => ({
+        ...p,
+        folder: p.folder || (p.front_matter?.folder as string) || undefined,
+        created_at: new Date(p.created_at),
+        updated_at: p.updated_at ? new Date(p.updated_at) : undefined,
+      })),
+      links: linksData.links || [],
+      lockedSkills: (skillsData.lockedSkills || []).map((s: any) => ({ ...s, created_at: new Date(s.created_at) })),
+      timelineEntries: (timelineData.timelineEntries || []).map((t: any) => ({ ...t, created_at: new Date(t.created_at) })),
+      shares: (sharesData.shares || []).map((s: any) => ({ ...s, granted_at: new Date(s.granted_at) })),
+      auditEvents: (auditsData.auditEvents || []).map((a: any) => ({ ...a, timestamp: new Date(a.timestamp) })),
+    };
+  } catch (err) {
+    console.error('Failed to load vault data:', err);
+    return null;
   }
-
-  if (Array.isArray(parsed.links)) {
-    const seenPair = new Set<string>();
-    result.links = parsed.links.filter((l: any) => {
-      if (!l || !l.from_page_id || !l.to_page_id || l.from_page_id === l.to_page_id) return false;
-      const key = `${l.from_page_id}->${l.to_page_id}`;
-      if (seenPair.has(key)) return false;
-      seenPair.add(key);
-      return true;
-    });
-  }
-
-  if (Array.isArray(parsed.auditEvents)) {
-    result.auditEvents = parsed.auditEvents.map((a: AuditEvent) => ({
-      ...a,
-      timestamp: new Date(a.timestamp),
-    }));
-  }
-
-  if (Array.isArray(parsed.timelineEntries)) {
-    result.timelineEntries = parsed.timelineEntries.map((t: TimelineEntry) => ({
-      ...t,
-      created_at: new Date(t.created_at),
-    }));
-  }
-
-  if (Array.isArray(parsed.shares)) {
-    result.shares = parsed.shares.map((s: Share) => ({
-      ...s,
-      granted_at: new Date(s.granted_at),
-    }));
-  }
-
-  if (Array.isArray(parsed.lockedSkills)) {
-    result.lockedSkills = parsed.lockedSkills.map((sk: SkillItem) => ({
-      ...sk,
-      created_at: new Date(sk.created_at),
-    }));
-  }
-
-  return result;
 }
 
-export async function saveVaultState(
-  state: PersistedVaultState,
-  userId: string = 'usr_admin',
-  vaultId?: string
+export async function importVaultData(
+  vaultId: string,
+  pages: any[],
+  links: any[],
+  userId: string = 'usr_admin'
 ): Promise<void> {
-  // 1. Immediate, synchronous browser storage write (guarantees persistence across refresh)
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch (err) {
-    console.error('Failed to save tkxel Vault state to localStorage:', err);
-  }
+  const token = localStorage.getItem('ssoToken');
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'x-user-id': userId,
+  };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  // 2. Asynchronous API / PostgreSQL database persistence
   try {
-    const token = localStorage.getItem('ssoToken');
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'x-user-id': userId,
-    };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-
-    await fetch(`${API_URL}/save`, {
+    await fetch(`${API_URL}/vaults/${vaultId}/import`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ ...state, vault_id: vaultId }),
+      body: JSON.stringify({ pages, links }),
     });
   } catch (err) {
-    console.warn('API save background sync failed (local state is safely retained):', err);
+    console.error('API import failed:', err);
   }
-}
-
-export async function loadVaultState(userId: string = 'usr_admin'): Promise<PersistedVaultState | null> {
-  // 1. Retrieve local storage state first (instant response)
-  let localState: PersistedVaultState | null = null;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      localState = reviveState(JSON.parse(raw));
-    }
-  } catch (err) {
-    console.error('Failed to parse localStorage state:', err);
-  }
-
-  // 2. Query the PostgreSQL API state
-  try {
-    const token = localStorage.getItem('ssoToken');
-    const headers: Record<string, string> = {
-      'x-user-id': userId,
-    };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-
-    const res = await fetch(`${API_URL}/state`, { headers });
-    if (res.ok) {
-      const parsedApi = await res.json();
-      const revivedApi = reviveState(parsedApi);
-
-      // Smart Merge:
-      // If the API has pages, use API pages and merge any local-only skills/timeline/shares
-      if (revivedApi.pages.length > 0) {
-        const merged: PersistedVaultState = {
-          ...revivedApi,
-          lockedSkills: revivedApi.lockedSkills.length > 0 ? revivedApi.lockedSkills : (localState?.lockedSkills || []),
-          timelineEntries: revivedApi.timelineEntries.length > 0 ? revivedApi.timelineEntries : (localState?.timelineEntries || []),
-          currentRole: localState?.currentRole || revivedApi.currentRole,
-        };
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
-        } catch {}
-        return merged;
-      }
-
-      // If API returned 0 pages BUT localState has user's uploaded/created pages:
-      // NEVER overwrite the user's notes with empty data!
-      if (localState && localState.pages.length > 0) {
-        console.log('API returned 0 pages; retaining user local notes and syncing to backend...');
-        saveVaultState(localState, userId).catch(console.error);
-        return localState;
-      }
-
-      if (localState) {
-        return localState;
-      }
-      return revivedApi;
-    }
-  } catch (err) {
-    console.warn('API server unavailable; using localStorage vault state:', err);
-  }
-
-  return localState;
 }
 
 export async function clearVaultState(): Promise<void> {
+  // tkxel_vault_storage_v1 is intentionally abandoned/cleared if found
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem('tkxel_vault_storage_v1');
   } catch (err) {
     console.error('Failed to clear tkxel Vault localStorage:', err);
   }

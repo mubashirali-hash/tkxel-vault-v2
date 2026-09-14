@@ -100,6 +100,14 @@ export class MarkdownImporter {
         parsed.frontMatter.type = isMd ? 'agent' : 'reference';
       }
 
+      // Strip untrusted privilege escalation frontmatter fields
+      delete parsed.frontMatter.vault_id;
+      delete parsed.frontMatter.vaultId;
+      delete parsed.frontMatter.role;
+      delete parsed.frontMatter.roles;
+      delete parsed.frontMatter.owner;
+      delete parsed.frontMatter.permissions;
+
       parsed.tags.forEach((tag: string) => allTags.add(tag));
       totalWikiLinks += parsed.links.length;
 
@@ -129,10 +137,33 @@ export class MarkdownImporter {
   public async importFromZip(zipBuffer: Buffer | Uint8Array): Promise<ImportResult> {
     const zip = await JSZip.loadAsync(zipBuffer);
     const fileMap = new Map<string, string>();
+    
+    const MAX_FILES = 2000;
+    const MAX_UNCOMPRESSED_SIZE = 100 * 1024 * 1024; // 100MB limit
+    let totalSize = 0;
+    let fileCount = 0;
 
     for (const [relativePath, zipEntry] of Object.entries(zip.files)) {
       if (!zipEntry.dir) {
+        // Path Traversal Protection
+        if (relativePath.includes('../') || relativePath.includes('..\\')) {
+          throw new Error(`Path traversal detected in ZIP entry: ${relativePath}`);
+        }
+
+        // File count limits
+        fileCount++;
+        if (fileCount > MAX_FILES) {
+          throw new Error(`ZIP archive exceeds maximum allowed file count (${MAX_FILES})`);
+        }
+
         const bytes = await zipEntry.async('uint8array');
+        
+        // Uncompressed size limits (Zip-bomb protection)
+        totalSize += bytes.length;
+        if (totalSize > MAX_UNCOMPRESSED_SIZE) {
+          throw new Error(`ZIP archive exceeds maximum uncompressed size (${MAX_UNCOMPRESSED_SIZE / 1024 / 1024}MB)`);
+        }
+
         const text = new TextDecoder('utf-8').decode(bytes);
         fileMap.set(relativePath, text);
       }
