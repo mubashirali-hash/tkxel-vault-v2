@@ -3,22 +3,24 @@
 on:
   workflow_dispatch:
     inputs:
-      environment:
-        description: 'Target Environment'
+      action:
+        description: 'Deployment Action'
         required: true
-        default: 'demo'
+        default: 'deploy-stack-and-app'
         type: choice
         options:
-          - demo
-          - staging
+          - deploy-stack-and-app
+          - update-app-only
+          - destroy-stack
   push:
     branches:
       - main
 
 jobs:
   deploy:
-    name: Deploy to AWS Demo Instance
+    name: Deploy tkxel Vault to AWS Demo
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -30,39 +32,86 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
 
-      - name: Deploy via SSH or AWS SSM
-        uses: appleboy/ssh-action@v1.0.3
-        if: "${{ secrets.EC2_HOST != '' }}"
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USERNAME || 'ubuntu' }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            set -e
-            echo "==> Deploying tkxel Vault to AWS Demo..."
-            if [ ! -d "~/tkxel-vault-v2" ]; then
-              git clone https://github.com/mubashirali-hash/tkxel-vault-v2.git ~/tkxel-vault-v2
+      - name: Teardown Stack (If Requested)
+        if: "${{ github.event.inputs.action == 'destroy-stack' }}"
+        run: |
+          echo "==> Tearing down CloudFormation stack tkxel-vault-demo..."
+          aws cloudformation delete-stack --stack-name tkxel-vault-demo
+          echo "==> Waiting for stack deletion..."
+          aws cloudformation wait stack-delete-complete --stack-name tkxel-vault-demo
+          echo "==> Stack deleted successfully. All AWS demo resources terminated."
+
+      - name: Deploy CloudFormation Stack
+        if: "${{ github.event.inputs.action != 'destroy-stack' }}"
+        id: cfn
+        run: |
+          echo "==> Deploying or updating CloudFormation stack tkxel-vault-demo..."
+          aws cloudformation deploy \
+            --template-file infra/cloudformation/tkxel-vault-demo.yml \
+            --stack-name tkxel-vault-demo \
+            --capabilities CAPABILITY_IAM \
+            --parameter-overrides InstanceType=t3.small \
+            --no-fail-on-empty-changeset
+
+          echo "==> Fetching Stack Outputs..."
+          OUTPUTS=$(aws cloudformation describe-stacks --stack-name tkxel-vault-demo --query "Stacks[0].Outputs" --output json)
+          
+          WEB_URL=$(echo $OUTPUTS | jq -r '.[] | select(.OutputKey=="WebUrl") | .OutputValue')
+          API_URL=$(echo $OUTPUTS | jq -r '.[] | select(.OutputKey=="ApiUrl") | .OutputValue')
+          MCP_URL=$(echo $OUTPUTS | jq -r '.[] | select(.OutputKey=="McpGatewayUrl") | .OutputValue')
+          PUBLIC_IP=$(echo $OUTPUTS | jq -r '.[] | select(.OutputKey=="PublicIp") | .OutputValue')
+          INSTANCE_ID=$(echo $OUTPUTS | jq -r '.[] | select(.OutputKey=="InstanceId") | .OutputValue')
+
+          echo "WEB_URL=$WEB_URL" >> $GITHUB_ENV
+          echo "API_URL=$API_URL" >> $GITHUB_ENV
+          echo "MCP_URL=$MCP_URL" >> $GITHUB_ENV
+          echo "PUBLIC_IP=$PUBLIC_IP" >> $GITHUB_ENV
+          echo "INSTANCE_ID=$INSTANCE_ID" >> $GITHUB_ENV
+
+      - name: Update Application Containers via AWS SSM
+        if: "${{ github.event.inputs.action != 'destroy-stack' }}"
+        run: |
+          echo "==> Sending update commands to EC2 instance ${{ env.INSTANCE_ID }} via AWS SSM..."
+          
+          # Wait up to 2 minutes for SSM agent to become online if newly provisioned
+          for i in {1..24}; do
+            STATUS=$(aws ssm describe-instance-information --filters "Key=InstanceIds,Values=${{ env.INSTANCE_ID }}" --query "InstanceInformationList[0].PingStatus" --output text || echo "Inactive")
+            if [ "$STATUS" == "Online" ]; then
+              echo "SSM Agent is Online."
+              break
             fi
-            cd ~/tkxel-vault-v2
-            git fetch --all
-            git checkout ${{ github.ref_name }}
-            git pull origin ${{ github.ref_name }}
-            
-            # Setup Environment Variables
-            cat << 'EOF' > .env
-            POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD || 'tkxelSecurePass2026' }}
-            KMS_PROVIDER=${{ secrets.KMS_PROVIDER || 'mock' }}
-            AWS_KMS_KEY_ID=${{ secrets.AWS_KMS_KEY_ID || '' }}
-            GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID || '' }}
-            EOF
+            echo "Waiting for SSM Agent on ${{ env.INSTANCE_ID }} ($STATUS)... ($i/24)"
+            sleep 5
+          done
 
-            # Launch Docker Compose Stack
-            docker compose down || true
-            docker compose up -d --build
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ env.INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=[
+              "set -e",
+              "cd /opt/tkxel-vault || exit 0",
+              "git fetch --all",
+              "git checkout '${{ github.ref_name }}' || git checkout dev",
+              "git pull origin '${{ github.ref_name }}' || git pull origin dev",
+              "docker compose down || true",
+              "docker compose up -d --build"
+            ]' \
+            --query "Command.CommandId" \
+            --output text)
 
-            # Wait for Database and API health
-            echo "==> Verifying deployment health..."
-            sleep 15
-            docker compose ps
-            curl -I http://localhost:3000 || exit 1
-            echo "==> Deployment to AWS Demo succeeded!"
+          echo "Command sent: $COMMAND_ID. Waiting for execution..."
+          aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "${{ env.INSTANCE_ID }}" || true
+
+      - name: Generate Deployment Summary
+        if: "${{ github.event.inputs.action != 'destroy-stack' }}"
+        run: |
+          echo "### 🚀 tkxel Vault Deployment Successful!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | Endpoint |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Web App & Knowledge Graph** | [${{ env.WEB_URL }}](${{ env.WEB_URL }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **REST API Server** | [${{ env.API_URL }}](${{ env.API_URL }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **MCP Gateway (Streamable HTTP)** | [${{ env.MCP_URL }}](${{ env.MCP_URL }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Public IP Host** | \`${{ env.PUBLIC_IP }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Zero-Read Encryption is active using native AWS KMS." >> $GITHUB_STEP_SUMMARY

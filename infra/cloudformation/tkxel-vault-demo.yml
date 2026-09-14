@@ -9,9 +9,14 @@ Parameters:
     Description: 'EC2 instance type for the demo container host.'
 
   KeyPairName:
-    Type: AWS::EC2::KeyPair::KeyName
-    Description: 'Name of an existing EC2 KeyPair for SSH access (optional).'
+    Type: String
+    Description: 'Name of an existing EC2 KeyPair for SSH access (optional, leave blank to use SSM).'
     Default: ''
+
+  LatestUbuntuAmi:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id'
+    Description: 'SSM parameter dynamically resolving latest Ubuntu 24.04 LTS AMI in the current region.'
 
 Resources:
   # 1. AWS KMS Master Key for Envelope Encryption
@@ -68,7 +73,7 @@ Resources:
           ToPort: 3002
           CidrIp: 0.0.0.0/0
 
-  # 3. IAM Role for Instance (Access to KMS)
+  # 3. IAM Role for Instance (Access to KMS and SSM)
   InstanceRole:
     Type: AWS::IAM::Role
     Properties:
@@ -105,17 +110,22 @@ Resources:
     Type: AWS::EC2::Instance
     Properties:
       InstanceType: !Ref InstanceType
-      SecurityGroups:
-        - !Ref VaultSecurityGroup
+      SecurityGroupIds:
+        - !GetAtt VaultSecurityGroup.GroupId
       IamInstanceProfile: !Ref InstanceProfile
       KeyName: !If [HasKeyPair, !Ref KeyPairName, !Ref 'AWS::NoValue']
-      ImageId: 'ami-0c7217cdde317cfec' # Canonical Ubuntu 24.04 LTS (us-east-1). Overridable.
+      ImageId: !Ref LatestUbuntuAmi
       BlockDeviceMappings:
         - DeviceName: '/dev/sda1'
           Ebs:
             VolumeSize: 30
             VolumeType: 'gp3'
             DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: tkxel-vault-demo-host
+        - Key: Environment
+          Value: demo
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash
@@ -135,7 +145,11 @@ Resources:
           # Clone tkxel Vault
           mkdir -p /opt/tkxel-vault
           cd /opt/tkxel-vault
-          git clone https://github.com/mubashirali-hash/tkxel-vault-v2.git .
+          if [ ! -d ".git" ]; then
+            git clone https://github.com/mubashirali-hash/tkxel-vault-v2.git .
+          else
+            git pull origin dev
+          fi
           
           # Create environment file with KMS ARN
           cat << 'ENVFILE' > .env
@@ -171,5 +185,8 @@ Outputs:
     Description: 'AWS KMS Master Key ARN'
     Value: !GetAtt TkxelKmsKey.Arn
   PublicIp:
-    Description: 'Public IP address for SSH / Deployment'
+    Description: 'Public IP address of the Demo Host'
     Value: !Ref DemoElasticIp
+  InstanceId:
+    Description: 'EC2 Instance ID for AWS SSM Management'
+    Value: !Ref DemoInstance
