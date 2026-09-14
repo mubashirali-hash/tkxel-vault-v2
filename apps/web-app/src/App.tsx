@@ -611,21 +611,29 @@ export const App: React.FC = () => {
     ];
     setLinks(finalLinks);
 
-    // Record audit event
-    const newAuditEvent: AuditEvent = {
-      id: crypto.randomUUID(),
-      actor_id: userInfo?.email || 'alex.dev@tkxel.com',
-      action: (isDraft ? 'save_draft' : 'publish_version') as any,
-      target_id: activePage.id,
-      timestamp: new Date(),
-      metadata: {
-        title: newTitle,
-        previousTitle: oldTitle,
-        linksCount: newOutgoing.length,
-        renamed: oldTitle !== newTitle,
-      },
-    };
-    setAuditEvents((prev) => [newAuditEvent, ...prev]);
+    // Record audit event (throttled for repetitive draft autosaves within 30s)
+    const lastDraftAudit = auditEvents.find(
+      (a) => a.target_id === activePage.id && a.action === ('save_draft' as any)
+    );
+    const timeSinceLastDraft = lastDraftAudit ? Date.now() - new Date(lastDraftAudit.timestamp).getTime() : Infinity;
+    const shouldRecordAudit = !isDraft || (oldTitle !== newTitle) || timeSinceLastDraft > 30000;
+
+    if (shouldRecordAudit) {
+      const newAuditEvent: AuditEvent = {
+        id: crypto.randomUUID(),
+        actor_id: userInfo?.email || 'alex.dev@tkxel.com',
+        action: (isDraft ? 'save_draft' : 'publish_version') as any,
+        target_id: activePage.id,
+        timestamp: new Date(),
+        metadata: {
+          title: newTitle,
+          previousTitle: oldTitle,
+          linksCount: newOutgoing.length,
+          renamed: oldTitle !== newTitle,
+        },
+      };
+      setAuditEvents((prev) => [newAuditEvent, ...prev]);
+    }
 
     // Immediately persist to local cache so user never loses draft or publish state
     saveVaultLocalCache(currentVault.id, {

@@ -98,6 +98,43 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   const [smartSuggestions, setSmartSuggestions] = useState<SuggestedLink[]>([]);
   const [isAutoLinking, setIsAutoLinking] = useState(false);
 
+  // Autosave state and tracking
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem('tkxel_vault_autosave_enabled');
+      return stored !== null ? stored !== 'false' : true;
+    } catch {
+      return true;
+    }
+  });
+  const [isAutoSaving, setIsAutoSaving] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+
+  const prevPageIdRef = useRef(page.id);
+  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isDirtyRef = useRef(false);
+  const activePageIdRef = useRef(page.id);
+
+  isDirtyRef.current = isDirty;
+  activePageIdRef.current = page.id;
+
+  const latestDocRef = useRef({
+    title,
+    content,
+    tags,
+    aliases,
+    type: pageType,
+    folder,
+  });
+  latestDocRef.current = {
+    title,
+    content,
+    tags,
+    aliases,
+    type: pageType,
+    folder,
+  };
+
   // Synchronize with global AI plugin toggle
   useEffect(() => {
     const handleToggle = (e: any) => {
@@ -338,6 +375,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     onUpdate: ({ editor }) => {
       const md = (editor.storage as any).markdown.getMarkdown();
       setContent(md);
+      setIsDirty(true);
       checkAndPositionPicker(editor);
     },
     onSelectionUpdate: ({ editor }) => {
@@ -347,6 +385,14 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
 
   // Sync state if active page changes
   useEffect(() => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+
+    const isDifferentNote = prevPageIdRef.current !== page.id;
+    prevPageIdRef.current = page.id;
+
     setTitle(page.title);
     setFolder(page.folder);
     const newBody =
@@ -357,8 +403,12 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     setAliases(page.aliases || []);
     setPageType(page.type);
     setIsDirty(false);
+    isDirtyRef.current = false;
+    setIsAutoSaving(false);
+    setLastSavedAt(null);
 
-    if (editor && !editor.isDestroyed) {
+    // Only update editor content if switching to a different note (prevents cursor jump during autosave)
+    if (isDifferentNote && editor && !editor.isDestroyed) {
       editor.commands.setContent(newBody);
     }
   }, [page.id, page.folder, editor]);
@@ -419,23 +469,68 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     setIsDirty(true);
   };
 
-  const handleSaveDocument = (isDraft: boolean = true) => {
-    const currentMd = editor && !editor.isDestroyed ? (editor.storage as any).markdown.getMarkdown() : content;
-    onSave(
-      {
-        title,
-        content: currentMd,
-        tags,
-        aliases,
-        type: pageType,
-        folder,
-      },
-      isDraft
-    );
-    setSavedFeedback(true);
+  const handleSaveDocument = (isDraft: boolean = true, isAuto: boolean = false) => {
+    if (!canEdit) return;
+    const currentMd = editor && !editor.isDestroyed ? (editor.storage as any).markdown.getMarkdown() : latestDocRef.current.content;
+    const dataToSave = {
+      ...latestDocRef.current,
+      content: currentMd,
+    };
+    if (isAuto) {
+      setIsAutoSaving(true);
+    }
+    onSave(dataToSave, isDraft);
     setIsDirty(false);
-    setTimeout(() => setSavedFeedback(false), 2000);
+    isDirtyRef.current = false;
+    setLastSavedAt(new Date());
+    setSavedFeedback(true);
+    setTimeout(() => {
+      setSavedFeedback(false);
+      if (isAuto) setIsAutoSaving(false);
+    }, 1200);
   };
+
+  // Debounced Autosave (1500ms after last edit)
+  useEffect(() => {
+    if (!isDirty || !autoSaveEnabled || !canEdit || !isOnline) {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+      return;
+    }
+
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+
+    autoSaveTimerRef.current = setTimeout(() => {
+      if (isDirtyRef.current && activePageIdRef.current === page.id) {
+        handleSaveDocument(true, true);
+      }
+    }, 1500);
+
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, [isDirty, autoSaveEnabled, canEdit, isOnline, title, content, tags, aliases, pageType, folder, page.id]);
+
+  // Keyboard shortcut: Ctrl+S / Cmd+S to save immediately
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (canEdit && isOnline) {
+          handleSaveDocument(true, false);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [canEdit, isOnline]);
 
   return (
     <div className="markdown-editor">
@@ -479,14 +574,69 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
 
           {/* Action Buttons */}
           <div className="markdown-editor__actions">
-            <span className="markdown-editor__save-state" data-state={!isOnline ? 'offline' : savedFeedback || !isDirty ? 'saved' : 'draft'}>
-              <Check size={14} /> {!isOnline ? 'Offline — changes stay here' : savedFeedback || !isDirty ? 'Draft saved' : 'Unsaved draft'}
+            <span
+              className="markdown-editor__save-state"
+              data-state={!isOnline ? 'offline' : isAutoSaving ? 'saving' : savedFeedback || !isDirty ? 'saved' : 'draft'}
+              title={lastSavedAt ? `Last autosaved at ${lastSavedAt.toLocaleTimeString()}` : undefined}
+            >
+              {isAutoSaving ? (
+                <>
+                  <Clock size={14} className="spin-animate" /> Saving...
+                </>
+              ) : (
+                <>
+                  <Check size={14} /> {!isOnline ? 'Offline — changes stay here' : savedFeedback || !isDirty ? (lastSavedAt ? `Draft saved (${lastSavedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})` : 'Draft saved') : 'Unsaved draft'}
+                </>
+              )}
             </span>
+
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !autoSaveEnabled;
+                  setAutoSaveEnabled(next);
+                  try {
+                    localStorage.setItem('tkxel_vault_autosave_enabled', String(next));
+                  } catch {}
+                }}
+                className="btn btn-ghost"
+                style={{
+                  padding: '2px 8px',
+                  fontSize: '0.72rem',
+                  fontWeight: 600,
+                  borderRadius: '12px',
+                  border: autoSaveEnabled ? '1px solid #bbf7d0' : '1px solid #e2e8f0',
+                  backgroundColor: autoSaveEnabled ? '#f0fdf4' : '#f8fafc',
+                  color: autoSaveEnabled ? '#166534' : '#64748b',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  cursor: 'pointer',
+                  height: '28px',
+                }}
+                title={
+                  autoSaveEnabled
+                    ? 'Autosave is enabled: saves drafts automatically after 1.5s of inactivity. Click to toggle.'
+                    : 'Autosave is disabled. Click to enable automatic draft saving.'
+                }
+              >
+                <span
+                  style={{
+                    width: '6px',
+                    height: '6px',
+                    borderRadius: '50%',
+                    backgroundColor: autoSaveEnabled ? '#22c55e' : '#94a3b8',
+                  }}
+                />
+                {autoSaveEnabled ? 'Autosave on' : 'Autosave off'}
+              </button>
+            )}
 
             {canEdit && (
               <>
                 <button
-                  onClick={() => handleSaveDocument(true)}
+                  onClick={() => handleSaveDocument(true, false)}
                   disabled={!isOnline}
                   className="btn btn-secondary-white"
                   style={{ padding: '4px 12px', fontSize: '0.78rem', height: '30px', border: '1px solid var(--tk-primary)', color: 'var(--tk-primary)' }}
@@ -494,7 +644,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
                   <Save size={14} />
                   Save Draft
                 </button>
-                <button disabled={!isOnline} onClick={() => handleSaveDocument(false)} className="btn btn-primary-blue" style={{ padding: '4px 14px', fontSize: '0.78rem', height: '30px' }}>
+                <button disabled={!isOnline} onClick={() => handleSaveDocument(false, false)} className="btn btn-primary-blue" style={{ padding: '4px 14px', fontSize: '0.78rem', height: '30px' }}>
                   <Check size={14} />
                   Publish
                 </button>
@@ -525,6 +675,18 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
                   label="More note actions"
                   compact
                   items={[
+                    {
+                      id: 'autosave',
+                      label: autoSaveEnabled ? 'Disable Autosave' : 'Enable Autosave',
+                      icon: <Clock size={15} />,
+                      onSelect: () => {
+                        const next = !autoSaveEnabled;
+                        setAutoSaveEnabled(next);
+                        try {
+                          localStorage.setItem('tkxel_vault_autosave_enabled', String(next));
+                        } catch {}
+                      },
+                    },
                     {
                       id: 'diff',
                       label: 'View changes',
