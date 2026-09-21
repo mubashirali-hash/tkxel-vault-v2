@@ -1,28 +1,43 @@
 FROM node:22-alpine AS builder
-# Enable corepack for pnpm support
-RUN corepack enable && corepack prepare pnpm@11.22.0 --activate
 
+RUN corepack enable && corepack prepare pnpm@11.22.0 --activate
 WORKDIR /app
 
-# Copy all source code (respects .dockerignore)
+# The lockfile is the dependency source of truth. The build context excludes
+# local dependencies, generated assets, secrets, and Git history.
 COPY . .
+RUN pnpm config set ignore-scripts true \
+  && pnpm install --frozen-lockfile \
+  && pnpm run build
 
-# Install dependencies and build all workspaces
-RUN pnpm config set ignore-scripts true
-RUN pnpm install --frozen-lockfile
-RUN pnpm run build
+FROM node:22-alpine AS runtime-base
 
-# Runner stage
-FROM node:22-alpine AS runner
-RUN corepack enable && corepack prepare pnpm@11.22.0 --activate
+RUN corepack enable \
+  && corepack prepare pnpm@11.22.0 --activate \
+  && addgroup -S -g 10001 vault \
+  && adduser -S -D -H -u 10001 -G vault vault
 
 WORKDIR /app
-
-# Copy the built application from the builder stage
+ENV NODE_ENV=production
 COPY --from=builder /app /app
 
-# Expose all ports that might be used
-EXPOSE 3000 3001 3002 3003
+FROM runtime-base AS migration
+CMD ["pnpm", "run", "--filter", "@tkxel-vault/vault-core", "migrate"]
 
-# The default command (will be overridden by docker-compose)
-CMD ["echo", "Please provide a command in docker-compose.yml"]
+FROM runtime-base AS api-server
+EXPOSE 3002
+CMD ["pnpm", "run", "--filter", "@tkxel-vault/api-server", "start"]
+
+FROM runtime-base AS mcp-gateway
+EXPOSE 3001
+CMD ["pnpm", "run", "--filter", "@tkxel-vault/mcp-gateway", "start"]
+
+FROM runtime-base AS skill-runner
+EXPOSE 3003
+USER 10001:10001
+CMD ["node", "services/skill-runner/dist/server.js"]
+
+FROM nginx:1.27-alpine AS web-app
+COPY docker/nginx-web.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder /app/apps/web-app/dist /usr/share/nginx/html
+EXPOSE 80

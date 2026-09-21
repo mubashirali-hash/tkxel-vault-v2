@@ -7,4 +7,6 @@ my_agents_and_skills.zip
 *.log
 *.sqlite
 .env
+.env.*
+!.env.deploy.example
 .DS_Store

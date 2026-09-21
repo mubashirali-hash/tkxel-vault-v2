@@ -16,6 +16,7 @@
 
 - [Quick Start](#quick-start)
 - [Active Service Endpoints](#active-service-endpoints)
+- [Docker Deployment](./docs/DEPLOY_WITH_DOCKER.md)
 - **Part I: Comprehensive Project Guide**
   1. [The Problem We're Solving](#1-the-problem-were-solving)
   2. [What tkxel Vault Is](#2-what-tkxel-vault-is)
