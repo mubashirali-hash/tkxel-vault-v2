@@ -70,7 +70,10 @@ export const CodeBlockComponent: React.FC<NodeViewProps> = ({
         const { svg } = await mermaid.render(diagramId, source);
 
         if (renderSeq.current === currentSeq) {
-          const sanitizedSvg = DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true } });
+          const sanitizedSvg = DOMPurify.sanitize(svg, {
+            USE_PROFILES: { svg: true, svgFilters: true, html: true },
+            ADD_TAGS: ['foreignObject'],
+          });
           setSvgHtml(sanitizedSvg);
           setRenderError(null);
           setIsRendering(false);

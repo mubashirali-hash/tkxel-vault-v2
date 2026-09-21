@@ -173,6 +173,11 @@
   box-shadow: var(--shadow-lg);
 }
 
+.ui-menu__content--left {
+  right: auto;
+  left: 0;
+}
+
 .ui-menu__item {
   width: 100%;
   min-height: 38px;

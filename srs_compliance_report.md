@@ -41,7 +41,7 @@ These are remediation assets, not proof of full compliance.
 
 ## Remediation Authority
 
-- Detailed work: [SENIOR_REVIEW_REMEDIATION_PLAN.md](./SENIOR_REVIEW_REMEDIATION_PLAN.md)
+- Detailed work: [bug_report.md](./bug_report.md)
 - Durable handoff: [CODEX_MEMORY.md](./CODEX_MEMORY.md)
 - Living milestone registry: [PROJECT_MEMORY.md](./PROJECT_MEMORY.md)
 

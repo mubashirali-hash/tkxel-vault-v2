@@ -58,9 +58,46 @@ export class NotesAiClient {
     } catch {
       // Fast client-side fallback if backend is offline
       const { activeNoteTitle, activeNoteContent, vaultNotes } = params;
+      const cleanTitle = activeNoteTitle.toLowerCase().trim();
+
+      // Extract already linked targets: [[target]], [[target|label]], [[relation::target]], and [label](target)
+      const existingLinks = new Set<string>();
+      const wikiRegex = /\[\[(.*?)\]\]/g;
+      let match: RegExpExecArray | null;
+      while ((match = wikiRegex.exec(activeNoteContent)) !== null) {
+        const inner = match[1].split('|')[0].split('::').pop()?.toLowerCase().trim();
+        if (inner) {
+          existingLinks.add(inner);
+          existingLinks.add(inner.replace(/\s+/g, '_'));
+          existingLinks.add(inner.replace(/_/g, ' '));
+        }
+      }
+      const mdLinkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+      while ((match = mdLinkRegex.exec(activeNoteContent)) !== null) {
+        const titlePart = match[1].toLowerCase().trim();
+        const urlPart = match[2].toLowerCase().trim().replace(/\.md$/, '').split('/').pop() || '';
+        if (titlePart) {
+          existingLinks.add(titlePart);
+          existingLinks.add(titlePart.replace(/\s+/g, '_'));
+          existingLinks.add(titlePart.replace(/_/g, ' '));
+        }
+        if (urlPart) {
+          existingLinks.add(urlPart);
+          existingLinks.add(urlPart.replace(/\s+/g, '_'));
+          existingLinks.add(urlPart.replace(/_/g, ' '));
+        }
+      }
+
       const contentLower = activeNoteContent.toLowerCase();
       return vaultNotes
-        .filter((n) => n.title.toLowerCase() !== activeNoteTitle.toLowerCase())
+        .filter((n) => {
+          const nTitle = n.title.toLowerCase().trim();
+          if (nTitle === cleanTitle) return false;
+          if (existingLinks.has(nTitle)) return false;
+          if (existingLinks.has(nTitle.replace(/\s+/g, '_')) || existingLinks.has(nTitle.replace(/_/g, ' '))) return false;
+          if (Array.isArray(n.aliases) && n.aliases.some((a) => existingLinks.has(a.toLowerCase().trim()))) return false;
+          return true;
+        })
         .filter((n) => contentLower.includes(n.title.toLowerCase()))
         .map((n) => ({
           targetTitle: n.title,

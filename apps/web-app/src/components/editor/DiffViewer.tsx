@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { GitCompareArrows, RotateCcw } from 'lucide-react';
 import { VaultRole } from '@tkxel-vault/types';
 import { Button, Dialog } from '../ui/index.js';
+import { getAuthToken } from '../../utils/storage.js';
 
 interface DiffViewerProps {
   pageId: string;
@@ -43,8 +44,16 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ pageId, vaultId, current
         owner: 'usr_admin', editor: 'sarah.lead@tkxel.com', reader: 'engineering-team@tkxel.com', consumer: 'external.auditor@client.com',
       };
       try {
-        const response = await fetch(`http://localhost:3002/api/pages/${pageId}/versions?vaultId=${vaultId}`, {
-          headers: { 'x-user-id': userIds[currentRole] || 'usr_admin' },
+        const token = getAuthToken();
+        const headers: Record<string, string> = {
+          'x-user-id': userIds[currentRole] || 'usr_admin',
+        };
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+        const apiUrl = import.meta.env?.VITE_API_URL || 'http://localhost:3002/api';
+        const response = await fetch(`${apiUrl}/pages/${pageId}/versions?vaultId=${vaultId}`, {
+          headers,
         });
         if (response.ok) {
           const data = await response.json();

@@ -23,10 +23,31 @@ export interface ApplyPageSaveResult {
 
 export function applyPageSave(params: {
   pages: Page[];
-  activePage: Page;
+  activePage: Page | null;
   updated: PageSavePayload;
 }): ApplyPageSaveResult {
   const { pages, activePage, updated } = params;
+  if (!activePage) {
+    return {
+      updatedPages: pages,
+      updatedActivePage: {
+        id: '',
+        vault_id: '',
+        type: updated.type,
+        title: updated.title,
+        aliases: updated.aliases || [],
+        tags: updated.tags || [],
+        content: updated.content,
+        front_matter: { title: updated.title, type: updated.type, tags: updated.tags, aliases: updated.aliases },
+        created_at: new Date(),
+      },
+      renamed: false,
+      oldTitle: updated.title,
+      newTitle: updated.title,
+      newOutgoingLinks: [],
+    };
+  }
+
   const oldTitle = activePage.title;
   const newTitle = updated.title.trim();
   const renamed = oldTitle !== newTitle;

@@ -16,9 +16,10 @@ const McpConnectModal = React.lazy(() => import('./components/mcp/McpConnectModa
 const CreateVaultModal = React.lazy(() => import('./components/vault/CreateVaultModal.js').then(m => ({ default: m.CreateVaultModal })));
 const MoveToVaultModal = React.lazy(() => import('./components/vault/MoveToVaultModal.js').then(m => ({ default: m.MoveToVaultModal })));
 import { SkillItem } from './components/skills/AddSkillModal.js';
-import { loadVaultData, saveVaultLocalCache, addVaultShareApi, revokeVaultShareApi, getAuthToken, setAuthToken, removeAuthToken } from './utils/storage.js';
+import { loadVaultData, saveVaultLocalCache, addVaultShareApi, revokeVaultShareApi, importVaultData, deletePageApi, getAuthToken, setAuthToken, removeAuthToken } from './utils/storage.js';
 import {
   createVaultApi,
+  deleteVaultApi,
   movePageApi,
   applyPageSave,
   savePageContentApi,
@@ -304,24 +305,40 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     // Initial load state
+    let isCurrent = true;
     const userId = userInfo?.email || 'usr_admin';
     loadVaultData(currentVault.id, userId, currentVault.mode).then((savedState: any) => {
-      if (savedState && savedState.pages && savedState.pages.length > 0) {
-        setPages(savedState.pages);
-        setActivePageId(savedState.pages[0].id);
-        setLinks(savedState.links || []);
+      if (!isCurrent) return;
+      if (savedState) {
         setLockedSkills(savedState.lockedSkills || []);
         setTimelineEntries(savedState.timelineEntries || []);
         setAuditEvents(savedState.auditEvents || []);
         setShares(savedState.shares || []);
-      } else {
-        setPages(SEED_PAGES);
-        setActivePageId(SEED_PAGES[0]?.id || '');
-        setLinks(SEED_LINKS);
+
+        if (currentVault.mode === 'locked') {
+          setPages([]);
+          setActivePageId('');
+          setLinks([]);
+        } else if (savedState.pages && savedState.pages.length > 0) {
+          setPages(savedState.pages);
+          setActivePageId(savedState.pages[0].id);
+          setLinks(savedState.links || []);
+        } else if (currentVault.id === '11111111-1111-1111-1111-111111111111') {
+          setPages(SEED_PAGES);
+          setActivePageId(SEED_PAGES[0]?.id || '');
+          setLinks(SEED_LINKS);
+        } else {
+          setPages([]);
+          setActivePageId('');
+          setLinks([]);
+        }
       }
       setIsLoaded(true);
     });
-  }, [userInfo?.email, currentVault.id]);
+    return () => {
+      isCurrent = false;
+    };
+  }, [userInfo?.email, currentVault.id, currentVault.mode]);
 
   const currentRole = useMemo<VaultRole | null>(() => {
     if (!userInfo?.email) return null;
@@ -334,24 +351,26 @@ export const App: React.FC = () => {
       .map((e: string) => e.trim())
       .filter(Boolean);
 
-    if (
-      configuredOwners.includes(userEmail) ||
-      userEmail === 'admin@tkxel.com' ||
-      currentVault.owner_id.toLowerCase().trim() === userEmail
-    ) {
+    if (configuredOwners.includes(userEmail)) {
       return 'owner';
     }
 
-    // Check explicit shares
-    const userShare = shares.find(
-      (s) => s.vault_id === currentVault.id && s.principal_id.toLowerCase().trim() === userEmail
-    );
-    if (userShare) {
-      return userShare.role;
+    // Direct vault ownership
+    if (currentVault.owner_id && currentVault.owner_id.toLowerCase().trim() === userEmail) {
+      return 'owner';
     }
 
-    return null;
-  }, [userInfo?.email, currentVault.id, currentVault.owner_id, shares]);
+    // Check shares
+    const activeShare = shares.find(
+      (s) => s.principal_id.toLowerCase().trim() === userEmail && s.vault_id === currentVault.id && !s.revoked_at
+    );
+    if (activeShare) {
+      return activeShare.role;
+    }
+
+    // Default fallback based on vault mode if user has access to UI
+    return currentVault.mode === 'locked' ? 'consumer' : 'reader';
+  }, [userInfo?.email, currentVault.id, currentVault.owner_id, currentVault.mode, shares]);
 
   // Modal Dialog States
   const [isShareOpen, setIsShareOpen] = useState(false);
@@ -369,8 +388,21 @@ export const App: React.FC = () => {
 
   // Auto-save state to localStorage whenever modified
   useEffect(() => {
-    if (!isLoaded) return;
-  }, [isLoaded, pages, links, shares, auditEvents, lockedSkills, timelineEntries, currentRole, currentVault.id, userInfo?.email]);
+    if (!isLoaded || currentVault.mode === 'locked') return;
+    const currentVaultPages = pages.filter((p) => p.vault_id === currentVault.id);
+    saveVaultLocalCache(
+      currentVault.id,
+      {
+        pages: currentVaultPages,
+        links,
+        shares,
+        auditEvents,
+        lockedSkills,
+        timelineEntries,
+      },
+      currentVault.mode
+    );
+  }, [isLoaded, pages, links, shares, auditEvents, lockedSkills, timelineEntries, currentVault.id, currentVault.mode]);
 
   // Ensure activePageId points to a valid page in current vault
   const vaultPages = pages.filter((p) => p.vault_id === currentVault.id);
@@ -436,7 +468,7 @@ export const App: React.FC = () => {
     // Audit Event
     const audit: AuditEvent = {
       id: crypto.randomUUID(),
-      actor_id: 'alex.dev@tkxel.com',
+      actor_id: userInfo?.email || 'usr_admin',
       action: 'publish_page',
       target_id: currentVault.id,
       timestamp: new Date(),
@@ -475,7 +507,7 @@ export const App: React.FC = () => {
 
     const audit: AuditEvent = {
       id: crypto.randomUUID(),
-      actor_id: 'alex.dev@tkxel.com',
+      actor_id: userInfo?.email || 'usr_admin',
       action: 'create_page',
       target_id: newId,
       timestamp: new Date(),
@@ -486,7 +518,7 @@ export const App: React.FC = () => {
 
   const handleCreateGhostPage = (ghostTitle: string) => {
     const newId = crypto.randomUUID();
-    const content = `# ${ghostTitle}\n\nInstantiated via wiki-link from [[${activePage.title}]].`;
+    const content = `# ${ghostTitle}\n\nInstantiated via wiki-link from [[${activePage?.title || 'Page'}]].`;
     const newPage: Page = {
       id: newId,
       vault_id: currentVault.id,
@@ -509,24 +541,27 @@ export const App: React.FC = () => {
     setActivePageId(newId);
 
     // Link current page to ghost page
-    setLinks((prev) => [...prev, { from_page_id: activePage.id, to_page_id: newId }]);
+    if (activePage) {
+      setLinks((prev) => [...prev, { from_page_id: activePage.id, to_page_id: newId }]);
+    }
 
     const audit: AuditEvent = {
       id: crypto.randomUUID(),
-      actor_id: 'alex.dev@tkxel.com',
+      actor_id: userInfo?.email || 'usr_admin',
       action: 'create_page',
       target_id: newId,
       timestamp: new Date(),
-      metadata: { title: ghostTitle, instantiated_from: activePage.title },
+      metadata: { title: ghostTitle, instantiated_from: activePage?.title || 'Page' },
     };
     setAuditEvents((prev) => [audit, ...prev]);
   };
 
-  const handleDeletePage = (pageId: string) => {
+  const handleDeletePage = async (pageId: string) => {
     const pageToDelete = pages.find((p) => p.id === pageId);
     let remainingPages = pages.filter((p) => p.id !== pageId);
+    const vaultRemaining = remainingPages.filter((p) => p.vault_id === currentVault.id);
 
-    if (remainingPages.length === 0) {
+    if (vaultRemaining.length === 0) {
       const fallbackId = crypto.randomUUID();
       const fallbackContent = '# Untitled Note\n\nStart writing notes and use [[wiki-links]] to connect concepts.';
       const fallbackPage: Page = {
@@ -546,24 +581,45 @@ export const App: React.FC = () => {
         current_version_id: null,
         created_at: new Date(),
       };
-      remainingPages = [fallbackPage];
+      remainingPages = [...remainingPages, fallbackPage];
       setActivePageId(fallbackId);
     } else if (activePageId === pageId) {
-      setActivePageId(remainingPages[0].id);
+      setActivePageId(vaultRemaining[0].id);
     }
 
+    const nextLinks = links.filter((l) => l.from_page_id !== pageId && l.to_page_id !== pageId);
     setPages(remainingPages);
-    setLinks((prev) => prev.filter((l) => l.from_page_id !== pageId && l.to_page_id !== pageId));
+    setLinks(nextLinks);
 
     const audit: AuditEvent = {
       id: crypto.randomUUID(),
-      actor_id: 'alex.dev@tkxel.com',
+      actor_id: userInfo?.email || 'usr_admin',
       action: 'delete_page',
       target_id: pageId,
       timestamp: new Date(),
       metadata: { title: pageToDelete?.title || 'Unknown Note' },
     };
-    setAuditEvents((prev) => [audit, ...prev]);
+    const nextAudits = [audit, ...auditEvents];
+    setAuditEvents(nextAudits);
+
+    saveVaultLocalCache(
+      currentVault.id,
+      {
+        pages: remainingPages.filter((p) => p.vault_id === currentVault.id),
+        links: nextLinks,
+        auditEvents: nextAudits,
+        shares,
+        lockedSkills,
+        timelineEntries,
+      },
+      currentVault.mode
+    );
+
+    try {
+      await deletePageApi(pageId, currentVault.id, userInfo?.email, ssoToken || getAuthToken());
+    } catch (err) {
+      console.error('Failed to delete page on server:', err);
+    }
   };
 
   const handleSavePage = async (updated: {
@@ -574,6 +630,8 @@ export const App: React.FC = () => {
     aliases?: string[];
     folder?: string;
   }, isDraft: boolean = true) => {
+    if (!activePage) return false;
+
     const saveResult = applyPageSave({
       pages,
       activePage,
@@ -598,7 +656,7 @@ export const App: React.FC = () => {
     if (shouldRecordAudit) {
       const newAuditEvent: AuditEvent = {
         id: crypto.randomUUID(),
-        actor_id: userInfo?.email || 'alex.dev@tkxel.com',
+        actor_id: userInfo?.email || 'usr_admin',
         action: (isDraft ? 'save_draft' : 'publish_version') as any,
         target_id: activePage.id,
         timestamp: new Date(),
@@ -616,7 +674,7 @@ export const App: React.FC = () => {
     saveVaultLocalCache(
       currentVault.id,
       {
-        pages: updatedPages,
+        pages: updatedPages.filter((p) => p.vault_id === currentVault.id),
         links: finalLinks,
       },
       currentVault.mode
@@ -643,7 +701,8 @@ export const App: React.FC = () => {
         if (res.status === 409) {
           // Attempt automatic timestamp reconciliation if page was desynchronized
           try {
-            const pageRes = await fetch(`http://localhost:3002/api/pages/${activePage.id}?vaultId=${currentVault.id}`, {
+            const apiBase = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3002/api';
+            const pageRes = await fetch(`${apiBase}/pages/${activePage.id}?vaultId=${currentVault.id}`, {
               headers: {
                 ...(ssoToken || getAuthToken() ? { Authorization: `Bearer ${ssoToken || getAuthToken()}` } : {}),
               },
@@ -678,7 +737,7 @@ export const App: React.FC = () => {
                     const finalDate = new Date(retryData.updated_at);
                     setPages((prev) => {
                       const reconciled = prev.map((p) => (p.id === activePage.id ? { ...p, updated_at: finalDate } : p));
-                      saveVaultLocalCache(currentVault.id, { pages: reconciled, links: finalLinks }, currentVault.mode);
+                      saveVaultLocalCache(currentVault.id, { pages: reconciled.filter((p) => p.vault_id === currentVault.id), links: finalLinks }, currentVault.mode);
                       return reconciled;
                     });
                   }
@@ -692,9 +751,8 @@ export const App: React.FC = () => {
           console.warn('Conflict: Page was modified concurrently. Local draft preserved in cache.');
           return false;
         } else {
-          console.warn('Failed to save version to DB (cloud offline):', await res.text());
-          // Changes are safely stored in saveVaultLocalCache, treat as successful local save
-          return true;
+          console.warn('Failed to save version to DB:', await res.text());
+          return false;
         }
       } else {
         const data = await res.json();
@@ -702,7 +760,7 @@ export const App: React.FC = () => {
           const freshDate = new Date(data.updated_at);
           setPages((prev) => {
             const updatedWithTimestamp = prev.map((p) => p.id === activePage.id ? { ...p, updated_at: freshDate } : p);
-            saveVaultLocalCache(currentVault.id, { pages: updatedWithTimestamp, links: finalLinks }, currentVault.mode);
+            saveVaultLocalCache(currentVault.id, { pages: updatedWithTimestamp.filter((p) => p.vault_id === currentVault.id), links: finalLinks }, currentVault.mode);
             return updatedWithTimestamp;
           });
         }
@@ -710,8 +768,7 @@ export const App: React.FC = () => {
       }
     } catch (err) {
       console.warn('Network error saving version (offline mode):', err);
-      // Changes are safely stored in saveVaultLocalCache, treat as successful local save
-      return true;
+      return false;
     }
   };
 
@@ -733,7 +790,7 @@ export const App: React.FC = () => {
 
     const audit: AuditEvent = {
       id: crypto.randomUUID(),
-      actor_id: 'alex.dev@tkxel.com',
+      actor_id: userInfo?.email || 'usr_admin',
       action: 'edit_page',
       target_id: sourcePageId,
       timestamp: new Date(),
@@ -756,7 +813,7 @@ export const App: React.FC = () => {
 
     const audit: AuditEvent = {
       id: crypto.randomUUID(),
-      actor_id: 'alex.dev@tkxel.com',
+      actor_id: userInfo?.email || 'usr_admin',
       action: 'upload_skill',
       target_id: newSkill.id,
       timestamp: new Date(),
@@ -771,7 +828,7 @@ export const App: React.FC = () => {
 
     const audit: AuditEvent = {
       id: crypto.randomUUID(),
-      actor_id: 'alex.dev@tkxel.com',
+      actor_id: userInfo?.email || 'usr_admin',
       action: 'delete_skill',
       target_id: skillId,
       timestamp: new Date(),
@@ -864,6 +921,22 @@ export const App: React.FC = () => {
     setCurrentVault(newVault);
   };
 
+  const handleDeleteVault = async (vaultId: string) => {
+    const token = ssoToken || getAuthToken();
+    await deleteVaultApi(vaultId, { token });
+
+    try {
+      localStorage.removeItem(`tkxel_vault_cache_${vaultId}`);
+    } catch {}
+
+    const remainingVaults = vaults.filter((v) => v.id !== vaultId);
+    setVaults(remainingVaults);
+
+    if (currentVault.id === vaultId && remainingVaults.length > 0) {
+      setCurrentVault(remainingVaults[0]);
+    }
+  };
+
   const handleMovePageToVault = async (destinationVaultId: string) => {
     if (!pageToMove) return;
     const token = ssoToken || getAuthToken();
@@ -880,6 +953,8 @@ export const App: React.FC = () => {
       const remainingInCurrent = pages.filter((p) => p.vault_id === currentVault.id && p.id !== targetPageId);
       if (remainingInCurrent.length > 0) {
         setActivePageId(remainingInCurrent[0].id);
+      } else {
+        setActivePageId('');
       }
     }
 
@@ -888,19 +963,20 @@ export const App: React.FC = () => {
   };
 
   const handleAddTimelineEntry = (text: string) => {
+    if (!activePage) return;
     const entry: TimelineEntry = {
       id: crypto.randomUUID(),
       page_id: activePage.id,
       date: new Date().toISOString().slice(0, 10),
       entry_text: text,
-      created_by: 'alex.dev@tkxel.com',
+      created_by: userInfo?.email || 'usr_admin',
       created_at: new Date(),
     };
     setTimelineEntries([...timelineEntries, entry]);
   };
 
   // Bulk Ingestion with link registration and audit event (DEF-07)
-  const handleImportComplete = (result: ImportResult) => {
+  const handleImportComplete = async (result: ImportResult) => {
     const { newPages, combinedPages, importedLinks } = processImportPages(result, currentVault.id, pages);
     setPages(combinedPages);
     setLinks((prev) => [...prev, ...importedLinks]);
@@ -909,10 +985,12 @@ export const App: React.FC = () => {
       setActivePageId(newPages[0].id);
     }
 
+    const userId = userInfo?.email || 'usr_admin';
+
     // Ingestion Audit Event
     const audit: AuditEvent = {
       id: crypto.randomUUID(),
-      actor_id: 'alex.dev@tkxel.com',
+      actor_id: userId,
       action: 'publish_page',
       target_id: currentVault.id,
       timestamp: new Date(),
@@ -924,6 +1002,27 @@ export const App: React.FC = () => {
     };
     const nextAudits = [audit, ...auditEvents];
     setAuditEvents(nextAudits);
+
+    // Persist to local cache immediately
+    saveVaultLocalCache(
+      currentVault.id,
+      {
+        pages: combinedPages.filter((p) => p.vault_id === currentVault.id),
+        links: [...links, ...importedLinks],
+        auditEvents: nextAudits,
+        shares,
+        lockedSkills,
+        timelineEntries,
+      },
+      currentVault.mode
+    );
+
+    // Persist all imported pages to the backend database
+    try {
+      await importVaultData(currentVault.id, newPages, importedLinks, userId);
+    } catch (err) {
+      console.error('Failed to persist import to API server:', err);
+    }
   };
 
   // Real JSZip Packaging & Download (DEF-01)
@@ -935,7 +1034,7 @@ export const App: React.FC = () => {
     // Audit Event
     const audit: AuditEvent = {
       id: crypto.randomUUID(),
-      actor_id: 'alex.dev@tkxel.com',
+      actor_id: userInfo?.email || 'usr_admin',
       action: 'export_open_vault',
       target_id: currentVault.id,
       timestamp: new Date(),
@@ -1133,6 +1232,7 @@ export const App: React.FC = () => {
       onToggleNavigation={handleToggleNavigation}
       onCloseNavigation={() => setIsNavigationOpen(false)}
       onSelectVault={handleSelectVault}
+      onDeleteVault={handleDeleteVault}
       onSelectTab={setCurrentTab}
       onOpenShareModal={() => setIsShareOpen(true)}
       onOpenExportModal={() => setIsExportOpen(true)}

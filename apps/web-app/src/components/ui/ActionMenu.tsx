@@ -17,9 +17,17 @@ export interface ActionMenuProps {
   label?: string;
   items: ActionMenuItem[];
   compact?: boolean;
+  align?: 'left' | 'right';
+  className?: string;
 }
 
-export const ActionMenu: React.FC<ActionMenuProps> = ({ label = 'More', items, compact = false }) => {
+export const ActionMenu: React.FC<ActionMenuProps> = ({
+  label = 'More',
+  items,
+  compact = false,
+  align = 'right',
+  className = '',
+}) => {
   const [open, setOpen] = useState(false);
   const menuId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -91,7 +99,7 @@ export const ActionMenu: React.FC<ActionMenuProps> = ({ label = 'More', items, c
         <div
           ref={menuRef}
           id={menuId}
-          className="ui-menu__content"
+          className={`ui-menu__content ${align === 'left' ? 'ui-menu__content--left' : ''} ${className}`.trim()}
           role="menu"
           aria-label={label}
           onKeyDown={handleMenuKeyDown}

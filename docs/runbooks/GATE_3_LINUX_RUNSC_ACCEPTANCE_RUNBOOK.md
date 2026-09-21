@@ -132,7 +132,7 @@ When executed on a verified Linux system with `runsc`:
 - The script prints `[PASS]` for all 9 phases.
 - The summary reports `0 failed checks`.
 - An execution log artifact `docs/acceptance-evidence/GATE-3-LINUX-RUNSC-EVIDENCE.log` should be captured and committed.
-- **Action:** Mark Review Gate 3 approved in [`SENIOR_REVIEW_REMEDIATION_PLAN.md`](file:///c:/Users/mubashir.ali/Desktop/Github%20Pull%20Request/tkxel-vault-v2/SENIOR_REVIEW_REMEDIATION_PLAN.md) and update [`CODEX_MEMORY.md`](file:///c:/Users/mubashir.ali/Desktop/Github%20Pull%20Request/tkxel-vault-v2/CODEX_MEMORY.md).
+- **Action:** Mark Review Gate 3 approved in [`bug_report.md`](file:///c:/Users/mubashir.ali/Desktop/Github%20Pull%20Request/tkxel-vault-v2/bug_report.md) and update [`CODEX_MEMORY.md`](file:///c:/Users/mubashir.ali/Desktop/Github%20Pull%20Request/tkxel-vault-v2/CODEX_MEMORY.md).
 
 ### Failing Run
 If any check fails:

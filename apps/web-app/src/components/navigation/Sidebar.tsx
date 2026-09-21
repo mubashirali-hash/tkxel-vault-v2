@@ -17,6 +17,7 @@ import {
 import { Page, Vault, VaultRole } from '@tkxel-vault/types';
 import { ActionMenu, ActionMenuItem, Button, Dialog, EmptyState, IconButton } from '../ui/index.js';
 import { Virtuoso } from 'react-virtuoso';
+import { getAuthToken } from '../../utils/storage.js';
 
 export interface SidebarProps {
   currentVault: Vault;
@@ -147,16 +148,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
       setSearchResults(vaultPages.filter((page) =>
         page.title.toLowerCase().includes(normalized)
         || (page.folder && page.folder.toLowerCase().includes(normalized))
-        || page.tags.some((tag) => tag.toLowerCase().includes(normalized)),
+        || page.tags?.some((tag) => tag.toLowerCase().includes(normalized)),
       ));
     };
 
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
+        const token = getAuthToken();
+        const headers: Record<string, string> = {};
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+        const apiUrl = import.meta.env?.VITE_API_URL || 'http://localhost:3002/api';
         const response = await fetch(
-          `http://localhost:3002/api/search?vaultId=${currentVault.id}&q=${encodeURIComponent(query)}`,
-          { signal: controller.signal },
+          `${apiUrl}/search?vaultId=${currentVault.id}&q=${encodeURIComponent(query)}`,
+          { headers, signal: controller.signal },
         );
         if (!response.ok) throw new Error('Search unavailable');
         const data = await response.json();

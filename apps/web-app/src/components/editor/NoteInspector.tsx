@@ -46,6 +46,16 @@ export const NoteInspector: React.FC<NoteInspectorProps> = ({
   const [activeTab, setActiveTab] = useState<InspectorTab>(initialTab);
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [newFolderNameInput, setNewFolderNameInput] = useState('');
+  const [aliasesInput, setAliasesInput] = useState(() => aliases.join(', '));
+  const [tagsInput, setTagsInput] = useState(() => tags.join(', '));
+
+  React.useEffect(() => {
+    setAliasesInput(aliases.join(', '));
+  }, [page.id]);
+
+  React.useEffect(() => {
+    setTagsInput(tags.join(', '));
+  }, [page.id]);
 
   const outgoing = links
     .filter((link) => link.from_page_id === page.id)
@@ -150,18 +160,30 @@ export const NoteInspector: React.FC<NoteInspectorProps> = ({
             </label>
             <label>Aliases
               <input
-                value={aliases.join(', ')}
+                value={aliasesInput}
                 disabled={!canEdit}
                 placeholder="Alternative names, separated by commas"
-                onChange={(event) => onChangeAliases(event.target.value.split(',').map((value) => value.trim()).filter(Boolean))}
+                onChange={(event) => {
+                  setAliasesInput(event.target.value);
+                  onChangeAliases(event.target.value.split(',').map((value) => value.trim()).filter(Boolean));
+                }}
+                onBlur={() => {
+                  setAliasesInput(aliases.join(', '));
+                }}
               />
             </label>
             <label>Tags
               <input
-                value={tags.join(', ')}
+                value={tagsInput}
                 disabled={!canEdit}
                 placeholder="Tags, separated by commas"
-                onChange={(event) => onChangeTags(event.target.value.split(',').map((value) => value.trim().replace(/^#/, '')).filter(Boolean))}
+                onChange={(event) => {
+                  setTagsInput(event.target.value);
+                  onChangeTags(event.target.value.split(',').map((value) => value.trim().replace(/^#/, '')).filter(Boolean));
+                }}
+                onBlur={() => {
+                  setTagsInput(tags.join(', '));
+                }}
               />
             </label>
           </div>

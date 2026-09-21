@@ -5,7 +5,7 @@ import { pages, versions, chunks, vaults, auditEvents } from '../schema/index.js
 import { createKmsProvider, EnvelopeEncryption, KmsProvider } from '../crypto/kms.js';
 import { getUserRoleForVault } from '../auth/index.js';
 import { MarkdownChunker } from '../search/chunker.js';
-import { getEmbeddingProvider, EmbeddingProvider, validateEmbeddingBatch } from '../search/embedding-provider.js';
+import { getEmbeddingProvider, EmbeddingProvider, validateEmbeddingBatch, EmbeddingConfigurationError } from '../search/embedding-provider.js';
 import { lockPageForMutation } from '../storage/page-lock.js';
 import { LinkGraphIndexer } from '../markdown/indexer.js';
 
@@ -179,10 +179,26 @@ export async function movePage(options: MovePageOptions): Promise<MovePageResult
           const docChunks = chunker.chunk(latestPlaintext);
 
           if (docChunks.length > 0) {
-            const provider = options.provider ?? getEmbeddingProvider();
-            const texts = docChunks.map((c) => c.content);
-            const embeddings = await provider.generateEmbeddings(texts);
-            validateEmbeddingBatch(embeddings, docChunks.length);
+            let embeddings: number[][] | null = null;
+            let skipEmbeddings = false;
+
+            if (!options.provider) {
+              try {
+                const provider = getEmbeddingProvider();
+                embeddings = await provider.generateEmbeddings(docChunks.map((c) => c.content));
+                validateEmbeddingBatch(embeddings, docChunks.length);
+              } catch (err) {
+                if (err instanceof EmbeddingConfigurationError) {
+                  console.warn('Embedding provider not configured during movePage, degrading to lexical tsvector only:', (err as any).message);
+                  skipEmbeddings = true;
+                } else {
+                  throw err;
+                }
+              }
+            } else {
+              embeddings = await options.provider.generateEmbeddings(docChunks.map((c) => c.content));
+              validateEmbeddingBatch(embeddings, docChunks.length);
+            }
 
             for (let idx = 0; idx < docChunks.length; idx++) {
               const chunkContent = docChunks[idx].content;
@@ -194,7 +210,7 @@ export async function movePage(options: MovePageOptions): Promise<MovePageResult
                 position: idx,
                 encrypted_text: encChunk,
                 tsv_content: sql`to_tsvector('english', ${chunkContent})`,
-                embedding: embeddings[idx],
+                embedding: skipEmbeddings || !embeddings ? null : embeddings[idx],
               });
             }
           }

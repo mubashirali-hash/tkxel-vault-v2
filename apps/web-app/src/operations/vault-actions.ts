@@ -70,3 +70,26 @@ export async function movePageApi(
     throw new Error(errBody.error || `Failed to move note (HTTP ${res.status})`);
   }
 }
+
+export async function deleteVaultApi(
+  vaultId: string,
+  options?: ApiRequestOptions
+): Promise<void> {
+  const baseUrl = options?.baseUrl || 'http://localhost:3002';
+  const fetchFn = options?.fetchImpl || fetch;
+  const token = options?.token;
+
+  const res = await fetchFn(`${baseUrl}/api/vaults/${vaultId}`, {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.error || `Failed to delete vault (HTTP ${res.status})`);
+  }
+}
+

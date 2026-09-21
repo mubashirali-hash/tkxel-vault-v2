@@ -1,7 +1,7 @@
 # Master Production Execution Plan: tkxel Vault
 
 > [!WARNING]
-> **Production sign-off reopened on 2026-09-16.** This file records the original build plan and historical review gates. Its approval markers are not current compliance evidence. Continue with [SENIOR_REVIEW_REMEDIATION_PLAN.md](./SENIOR_REVIEW_REMEDIATION_PLAN.md) and use [CODEX_MEMORY.md](./CODEX_MEMORY.md) for the audited handoff state.
+> **Production sign-off reopened on 2026-09-16.** This file records the original build plan and historical review gates. Its approval markers are not current compliance evidence. Continue with [bug_report.md](./bug_report.md) and use [CODEX_MEMORY.md](./CODEX_MEMORY.md) for the audited handoff state.
 
 This document defines the authoritative, production-grade engineering roadmap for **tkxel Vault**, broken down into **6 Sequential Epics** and **24 Atomic Chunks**.
 

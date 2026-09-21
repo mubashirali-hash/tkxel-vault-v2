@@ -4,7 +4,7 @@
 > **Last updated:** 2026-09-18  
 > **State:** Epic 0 through Epic 6 complete; Review Gate 3 approved by user with live Linux gVisor runsc evidence; Review Gate 6 approved. Epic 7 is IN PROGRESS (repairing production-path acceptance tests per senior review findings; Review Gate 7 NOT yet approved).  
 > **Recommended total budget:** 500,000 tokens  
-> **Execution plan:** [SENIOR_REVIEW_REMEDIATION_PLAN.md](./SENIOR_REVIEW_REMEDIATION_PLAN.md)
+> **Execution plan:** [bug_report.md](./bug_report.md)
 
 ## 1. Resume Here
 
@@ -57,7 +57,7 @@ When documents disagree, use this order:
 1. `AGENTS.md` security invariants.
 2. `tkxel_vault_SRS.md` and `tkxel_vault_PRD.md` requirements.
 3. Executed production-path behavior and current schema/migrations.
-4. `SENIOR_REVIEW_REMEDIATION_PLAN.md` for the remediation sequence.
+4. `bug_report.md` for the remediation sequence.
 5. This file for continuity and evidence.
 6. `PROJECT_MEMORY.md`, README, walkthroughs, and compliance reports only where verified.
 
@@ -210,7 +210,7 @@ Update this table at every review gate.
 ## 8. Resume Protocol for a Future Agent
 
 1. Read `AGENTS.md` completely.
-2. Read this file and `SENIOR_REVIEW_REMEDIATION_PLAN.md`.
+2. Read this file and `bug_report.md`.
 3. Inspect `git status --short` and preserve all user changes.
 4. Read the skill and agent specification for the active epic.
 5. Re-verify the finding against current code because line numbers may move.
@@ -343,7 +343,7 @@ Future entries must state: epic/chunk, commit or dirty-state identifier, files c
   - Client storage strictly eliminates note bodies and bearer tokens from persistent `localStorage`.
 - **Status Updates:**
   - `docs/adr/ADR-017-searchable-encryption-boundaries.md` updated to `Accepted`.
-  - `SENIOR_REVIEW_REMEDIATION_PLAN.md` Review Gate 2 marked approved (`[x]`).
+  - `bug_report.md` Review Gate 2 marked approved (`[x]`).
   - Monorepo baseline: 12/12 tasks passing uncached, 242/242 tests passing.
 - **Next action:** Execute Epic 3 (Independent Locked Skill Runner and Fail-Closed Providers), preserve all 242 passing tests, and stop at Review Gate 3 for user approval.
 

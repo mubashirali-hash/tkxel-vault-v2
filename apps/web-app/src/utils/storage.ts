@@ -63,10 +63,10 @@ export interface VaultData {
   currentRole?: VaultRole;
 }
 
-const API_URL = 'http://localhost:3002/api';
+const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3002/api';
 
 let lastDbFailureTime = 0;
-const DB_FAILURE_COOLDOWN_MS = 15000;
+const DB_FAILURE_COOLDOWN_MS = 5000;
 
 export function saveVaultLocalCache(vaultId: string, data: Partial<VaultData>, vaultMode?: string): void {
   try {
@@ -178,7 +178,7 @@ export async function loadVaultData(vaultId: string, userId: string = 'usr_admin
     ]);
 
     // If server responded with valid pages data, update cache and return
-    if (pagesData && Array.isArray(pagesData.pages) && pagesData.pages.length > 0) {
+    if (pagesRes?.ok && pagesData && Array.isArray(pagesData.pages)) {
       const result: VaultData = {
         pages: pagesData.pages.map((p: any) => ({
           ...p,
@@ -199,7 +199,7 @@ export async function loadVaultData(vaultId: string, userId: string = 'usr_admin
     }
 
     if (vaultMode !== 'locked') {
-      // If server is offline or returned empty, check local cache fallback
+      // If server is offline or errored, check local cache fallback
       const localCached = getVaultLocalCache(vaultId);
       if (localCached && localCached.pages.length > 0) {
         return localCached;
@@ -337,3 +337,30 @@ export async function revokeVaultShareApi(
     return false;
   }
 }
+
+export async function deletePageApi(
+  pageId: string,
+  vaultId: string,
+  userId: string = 'usr_admin',
+  token?: string | null
+): Promise<boolean> {
+  try {
+    const headers: Record<string, string> = {
+      'x-user-id': userId,
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const res = await fetch(`${API_URL}/pages/${pageId}?vaultId=${vaultId}`, {
+      method: 'DELETE',
+      headers,
+    });
+
+    return res.ok;
+  } catch (err) {
+    console.error('Error in deletePageApi:', err);
+    return false;
+  }
+}
+

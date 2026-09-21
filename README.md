@@ -8,7 +8,7 @@
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25%20Streamable%20HTTP-success.svg)](https://modelcontextprotocol.io)
 [![Tests](https://img.shields.io/badge/tests-12%2F12%20tasks%20passing-blue.svg)](#testing--quality-assurance)
 [![ADRs](https://img.shields.io/badge/ADRs-19%20documented-blueviolet.svg)](./docs/adr/)
-[![Remediation](https://img.shields.io/badge/remediation-Epics%200--8-orange.svg)](./SENIOR_REVIEW_REMEDIATION_PLAN.md)
+[![Remediation](https://img.shields.io/badge/remediation-Epics%200--8-orange.svg)](./bug_report.md)
 
 ---
 
@@ -325,7 +325,7 @@ What staff CANNOT do:
 ---
 
 > [!WARNING]
-> **Current release status (2026-09-16): remediation required; not production-approved.** A production-path audit reopened multi-tenant isolation, zero-read storage, runner separation, hybrid retrieval, and acceptance-test gates. See [CODEX_MEMORY.md](./CODEX_MEMORY.md) and [SENIOR_REVIEW_REMEDIATION_PLAN.md](./SENIOR_REVIEW_REMEDIATION_PLAN.md). Descriptions below include target architecture and historical implementation; they are not current compliance certification.
+> **Current release status (2026-09-16): remediation required; not production-approved.** A production-path audit reopened multi-tenant isolation, zero-read storage, runner separation, hybrid retrieval, and acceptance-test gates. See [CODEX_MEMORY.md](./CODEX_MEMORY.md) and [bug_report.md](./bug_report.md). Descriptions below include target architecture and historical implementation; they are not current compliance certification.
 
 ## 6. The Four System Layers
 

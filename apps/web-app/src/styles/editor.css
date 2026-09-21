@@ -317,3 +317,165 @@
 
 .markdown-preview__mermaid-error-msg { background: #ffe4e6; color: #881337; }
 .markdown-preview__mermaid-error-src { background: #f8fafc; color: var(--text-secondary); }
+
+/* ── Smart Linker AI Banner ─────────────────────────────────────────────────── */
+.smart-link-banner {
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #e9d5ff;
+  background: linear-gradient(135deg, #faf5ff 0%, #f3e8ff 50%, #eff6ff 100%);
+  box-shadow: 0 1px 3px rgba(147, 51, 234, 0.08);
+}
+
+.smart-link-banner__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.smart-link-banner__lead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.smart-link-banner__icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #7c3aed;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 1px 2px rgba(124, 58, 237, 0.2);
+}
+
+.smart-link-banner__title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #581c87;
+  margin-right: 4px;
+}
+
+.smart-link-banner__count {
+  font-size: 0.78rem;
+  color: #475569;
+}
+
+.smart-link-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.smart-link-banner__btn-accept-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: #7c3aed;
+  color: #ffffff;
+  border: 1px solid #6d28d9;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.smart-link-banner__btn-accept-all:hover:not(:disabled) {
+  background: #6d28d9;
+}
+
+.smart-link-banner__btn-accept-all:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.smart-link-banner__btn-dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.smart-link-banner__btn-dismiss:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: #475569;
+}
+
+.smart-link-banner__chips {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(216, 180, 254, 0.4);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.smart-link-banner__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 10px;
+  border-radius: 9999px;
+  border: 1px solid #d8b4fe;
+  background: #ffffff;
+  font-size: 0.76rem;
+  color: #581c87;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.smart-link-banner__chip-title {
+  font-weight: 600;
+}
+
+.smart-link-banner__chip-pct {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #7c3aed;
+  background: #f3e8ff;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.smart-link-banner__chip-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: #f3e8ff;
+  color: #7c3aed;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  margin-left: 2px;
+}
+
+.smart-link-banner__chip-btn:hover:not(:disabled) {
+  background: #7c3aed;
+  color: #ffffff;
+}
+
+.smart-link-banner__more {
+  font-size: 0.72rem;
+  color: #64748b;
+  font-weight: 500;
+}
+

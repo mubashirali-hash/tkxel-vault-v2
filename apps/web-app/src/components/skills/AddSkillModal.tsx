@@ -151,7 +151,7 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
       const skillMdContent = await skillMdFile.async('string');
       
       // Extract YAML frontmatter
-      const match = skillMdContent.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+      const match = skillMdContent.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
       let frontmatter: any = {};
       let body = skillMdContent;
       

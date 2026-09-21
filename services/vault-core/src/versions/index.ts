@@ -3,7 +3,7 @@ import { db } from '../db.js';
 import { versions, pages, vaults, chunks } from '../schema/index.js';
 import { createKmsProvider, EnvelopeEncryption } from '../crypto/kms.js';
 import { MarkdownChunker } from '../search/chunker.js';
-import { getEmbeddingProvider, EmbeddingProvider, validateEmbeddingBatch } from '../search/embedding-provider.js';
+import { getEmbeddingProvider, EmbeddingProvider, validateEmbeddingBatch, EmbeddingConfigurationError } from '../search/embedding-provider.js';
 import { lockPageForMutation } from '../storage/page-lock.js';
 
 export async function saveDraft(
@@ -28,20 +28,24 @@ export async function saveDraft(
         const expectedMs = new Date(expectedUpdatedAt).getTime();
         if (currentMs && !isNaN(expectedMs) && currentMs !== expectedMs) {
           const conflictError = new Error('Conflict: Page was modified by another user.');
-          (conflictError as any).status = 409;
+          (conflictError as any).code = 'CONCURRENT_MODIFICATION';
           throw conflictError;
         }
       }
 
-      // 3. Resolve vault identity and lock vault FOR SHARE
-      let vaultQuery: any = tx.select().from(vaults).where(eq(vaults.id, lockedPage.vault_id));
-      if (typeof vaultQuery.for !== 'function') {
-        throw new Error('Database adapter cannot provide required row-level locking (FOR SHARE). Failing closed.');
-      }
-      vaultQuery = vaultQuery.for('share');
-      const vaultRec = await vaultQuery;
-      if (!vaultRec[0] || !vaultRec[0].data_key_id) {
-        throw new Error('Vault not found or DEK missing');
+      // 3. Select vault FOR SHARE to prevent mode drift
+      const vaultRec = await tx.select({
+        id: vaults.id,
+        mode: vaults.mode,
+        data_key_id: vaults.data_key_id
+      })
+      .from(vaults)
+      .where(eq(vaults.id, lockedPage.vault_id))
+      .for('share')
+      .limit(1);
+
+      if (!vaultRec || vaultRec.length === 0) {
+        throw new Error('Vault not found for page');
       }
       const vault = vaultRec[0];
 
@@ -57,22 +61,39 @@ export async function saveDraft(
         content: string;
         chunkIndex: number;
         encText: Buffer;
-        embedding: number[];
+        embedding: number[] | null;
       }> = [];
 
       if (vault.mode === 'open') {
         const chunker = new MarkdownChunker({ maxTokensPerChunk: 400, overlapTokens: 50 });
         const docChunks = chunker.chunk(content);
         if (docChunks.length > 0) {
-          const embeddingProvider = provider ?? getEmbeddingProvider();
-          const texts = docChunks.map((c) => c.content);
-          const embeddings = await embeddingProvider.generateEmbeddings(texts);
-          validateEmbeddingBatch(embeddings, docChunks.length);
+          let embeddings: number[][] | null = null;
+          let skipEmbeddings = false;
+
+          if (!provider) {
+            try {
+              const embeddingProvider = getEmbeddingProvider();
+              embeddings = await embeddingProvider.generateEmbeddings(docChunks.map((c) => c.content));
+              validateEmbeddingBatch(embeddings, docChunks.length);
+            } catch (err) {
+              if (err instanceof EmbeddingConfigurationError) {
+                console.warn('Embedding provider not configured during saveDraft, degrading to lexical tsvector only:', (err as any).message);
+                skipEmbeddings = true;
+              } else {
+                throw err;
+              }
+            }
+          } else {
+            embeddings = await provider.generateEmbeddings(docChunks.map((c) => c.content));
+            validateEmbeddingBatch(embeddings, docChunks.length);
+          }
+
           preparedChunks = docChunks.map((c, i) => ({
             content: c.content,
             chunkIndex: c.chunkIndex,
             encText: EnvelopeEncryption.encrypt(c.content, dek!),
-            embedding: embeddings[i],
+            embedding: skipEmbeddings || !embeddings ? null : embeddings[i],
           }));
         }
       }
@@ -194,7 +215,7 @@ export async function publishVersion(pageId: string, authorId: string, provider?
         content: string;
         chunkIndex: number;
         encText: Buffer;
-        embedding: number[];
+        embedding: number[] | null;
       }> = [];
 
       if (vault.mode === 'open' && currentChunks.length === 0) {
@@ -202,15 +223,32 @@ export async function publishVersion(pageId: string, authorId: string, provider?
         const chunker = new MarkdownChunker({ maxTokensPerChunk: 400, overlapTokens: 50 });
         const docChunks = chunker.chunk(plaintext);
         if (docChunks.length > 0) {
-          const embeddingProvider = provider ?? getEmbeddingProvider();
-          const texts = docChunks.map((c) => c.content);
-          const embeddings = await embeddingProvider.generateEmbeddings(texts);
-          validateEmbeddingBatch(embeddings, docChunks.length);
+          let embeddings: number[][] | null = null;
+          let skipEmbeddings = false;
+
+          if (!provider) {
+            try {
+              const embeddingProvider = getEmbeddingProvider();
+              embeddings = await embeddingProvider.generateEmbeddings(docChunks.map((c) => c.content));
+              validateEmbeddingBatch(embeddings, docChunks.length);
+            } catch (err) {
+              if (err instanceof EmbeddingConfigurationError) {
+                console.warn('Embedding provider not configured during publishVersion, degrading to lexical tsvector only:', (err as any).message);
+                skipEmbeddings = true;
+              } else {
+                throw err;
+              }
+            }
+          } else {
+            embeddings = await provider.generateEmbeddings(docChunks.map((c) => c.content));
+            validateEmbeddingBatch(embeddings, docChunks.length);
+          }
+
           preparedChunks = docChunks.map((c, i) => ({
             content: c.content,
             chunkIndex: c.chunkIndex,
             encText: EnvelopeEncryption.encrypt(c.content, dek!),
-            embedding: embeddings[i],
+            embedding: skipEmbeddings || !embeddings ? null : embeddings[i],
           }));
         }
       }

@@ -118,7 +118,26 @@ export class NotesAssistant {
     let match: RegExpExecArray | null;
     while ((match = linkRegex.exec(activeNoteContent)) !== null) {
       const inner = match[1].split('|')[0].split('::').pop()?.toLowerCase().trim();
-      if (inner) existingLinks.add(inner);
+      if (inner) {
+        existingLinks.add(inner);
+        existingLinks.add(inner.replace(/\s+/g, '_'));
+        existingLinks.add(inner.replace(/_/g, ' '));
+      }
+    }
+    const mdLinkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+    while ((match = mdLinkRegex.exec(activeNoteContent)) !== null) {
+      const titlePart = match[1].toLowerCase().trim();
+      const urlPart = match[2].toLowerCase().trim().replace(/\.md$/, '').split('/').pop() || '';
+      if (titlePart) {
+        existingLinks.add(titlePart);
+        existingLinks.add(titlePart.replace(/\s+/g, '_'));
+        existingLinks.add(titlePart.replace(/_/g, ' '));
+      }
+      if (urlPart) {
+        existingLinks.add(urlPart);
+        existingLinks.add(urlPart.replace(/\s+/g, '_'));
+        existingLinks.add(urlPart.replace(/_/g, ' '));
+      }
     }
 
     // 2. Filter candidate notes (exclude self and already linked notes)
@@ -126,6 +145,8 @@ export class NotesAssistant {
       const nTitle = n.title.toLowerCase().trim();
       if (nTitle === cleanTitle) return false;
       if (existingLinks.has(nTitle)) return false;
+      if (existingLinks.has(nTitle.replace(/\s+/g, '_')) || existingLinks.has(nTitle.replace(/_/g, ' '))) return false;
+      if (Array.isArray(n.aliases) && n.aliases.some((a) => existingLinks.has(a.toLowerCase().trim()))) return false;
       return true;
     });
 

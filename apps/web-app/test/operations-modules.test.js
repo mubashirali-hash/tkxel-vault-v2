@@ -6,6 +6,7 @@ register(new URL('./helpers/tsx-loader.js', import.meta.url).href, import.meta.u
 
 const {
   createVaultApi,
+  deleteVaultApi,
   movePageApi,
   applyPageSave,
   savePageContentApi,
@@ -105,6 +106,39 @@ describe('Production Operations: Vault Actions API', () => {
     await assert.rejects(
       () => movePageApi('page-101', 'dest-vault-02', { fetchImpl: forbiddenFetch }),
       /Permission denied/
+    );
+  });
+
+  test('deleteVaultApi: dispatches DELETE request with authorization and throws on error', async () => {
+    let requestedUrl = '';
+    let requestedMethod = '';
+    let authHeader = '';
+
+    const mockFetch = async (url, options) => {
+      requestedUrl = url;
+      requestedMethod = options.method;
+      authHeader = options.headers?.['Authorization'];
+      return { ok: true, status: 200, json: async () => ({ success: true }) };
+    };
+
+    await deleteVaultApi('vault-to-delete-01', {
+      token: 'token-xyz',
+      fetchImpl: mockFetch,
+    });
+
+    assert.equal(requestedUrl, 'http://localhost:3002/api/vaults/vault-to-delete-01');
+    assert.equal(requestedMethod, 'DELETE');
+    assert.equal(authHeader, 'Bearer token-xyz');
+
+    const failingFetch = async () => ({
+      ok: false,
+      status: 403,
+      json: async () => ({ error: 'Forbidden: only owner can delete vault' }),
+    });
+
+    await assert.rejects(
+      () => deleteVaultApi('vault-to-delete-01', { fetchImpl: failingFetch }),
+      /Forbidden: only owner can delete vault/
     );
   });
 });

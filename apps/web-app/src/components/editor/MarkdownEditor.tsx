@@ -246,7 +246,6 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
       const md = (editor.storage as any).markdown.getMarkdown();
       setContent(md);
       if (editor.isFocused) setIsDirty(true);
-      if (editor.isFocused) setIsDirty(true);
     } else {
       setContent((prev) => `${prev} ${linkSyntax}`);
     }
@@ -425,7 +424,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
       if (editor && !editor.isDestroyed) {
         queueMicrotask(() => {
           if (editor && !editor.isDestroyed) {
-            editor.commands.setContent(newBody);
+            editor.commands.setContent(newBody, { emitUpdate: false });
           }
         });
       }
@@ -456,7 +455,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   const handleSelectWikiLink = (linkTitle: string) => {
     if (editor && !editor.isDestroyed) {
       const { from } = editor.state.selection;
-      const textBefore = editor.state.doc.textBetween(Math.max(0, from - 40), from);
+      const textBefore = editor.state.doc.textBetween(Math.max(0, from - 50), from, ' ');
       const lastOpen = textBefore.lastIndexOf('[[');
       if (lastOpen !== -1) {
         const deleteCount = textBefore.length - lastOpen;
