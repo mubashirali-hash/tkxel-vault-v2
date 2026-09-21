@@ -1,4 +1,5 @@
 import http, { IncomingMessage, ServerResponse } from 'node:http';
+import crypto from 'node:crypto';
 import { StreamableHttpTransport, JsonRpcRequest } from './transport/streamable-http.js';
 import { OAuthValidator, SsoUserClaims } from './auth/oauth.js';
 import { ToolPalettePolicy, UserVaultAccess } from './auth/policy.js';
@@ -18,12 +19,26 @@ import {
   RUN_SKILL_TOOL,
   createLockedRetrievalHandlers,
 } from './tools/locked-tools.js';
+import { db } from '@tkxel-vault/vault-core/db';
+import * as schema from '@tkxel-vault/vault-core/schema';
+import { getUserAccessibleVaults } from '@tkxel-vault/vault-core';
+
+function constantTimeEquals(actual: string, expected: string): boolean {
+  const actualBuffer = Buffer.from(actual, 'utf8');
+  const expectedBuffer = Buffer.from(expected, 'utf8');
+  return actualBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
+}
 
 export interface GatewayServerOptions {
   port?: number;
   oauthValidator?: OAuthValidator;
   vaultStore?: OpenVaultStore;
   accessResolver?: (userId: string) => Promise<UserVaultAccess[]>;
+  ssoWebhookSecret?: string;
+}
+
+export function createMcpGatewayServer(options?: GatewayServerOptions): McpGatewayServer {
+  return new McpGatewayServer(options);
 }
 
 /**
@@ -36,6 +51,7 @@ export class McpGatewayServer {
   private policy: ToolPalettePolicy;
   private rateLimiter: SlidingWindowRateLimiter;
   private accessResolver: (userId: string) => Promise<UserVaultAccess[]>;
+  private ssoWebhookSecret?: string;
   private server?: http.Server;
   private port: number;
 
@@ -45,11 +61,21 @@ export class McpGatewayServer {
     this.oauthValidator = options?.oauthValidator ?? new OAuthValidator();
     this.policy = new ToolPalettePolicy();
     this.rateLimiter = new SlidingWindowRateLimiter();
+    this.ssoWebhookSecret =
+      options?.ssoWebhookSecret ||
+      process.env.OKTA_WEBHOOK_SECRET ||
+      process.env.SSO_WEBHOOK_SECRET;
     this.accessResolver =
       options?.accessResolver ??
-      (async () => [
-        { vaultId: 'vlt_default', mode: 'open', role: 'reader' },
-      ]);
+      (async (userId: string) => {
+        try {
+          const accessible = await getUserAccessibleVaults(userId);
+          if (accessible && accessible.length > 0) {
+            return accessible;
+          }
+        } catch {}
+        return [];
+      });
 
     // Register Open Vault Tools
     if (options?.vaultStore) {
@@ -84,6 +110,14 @@ export class McpGatewayServer {
     return this.rateLimiter;
   }
 
+  public getPort(): number {
+    return this.port;
+  }
+
+  public getAccessResolver(): (userId: string) => Promise<UserVaultAccess[]> {
+    return this.accessResolver;
+  }
+
   /**
    * Dispatches incoming HTTP requests.
    */
@@ -114,12 +148,64 @@ export class McpGatewayServer {
     }
 
     // SSO Deprovisioning webhook (FR-55)
-    if (method === 'POST' && url === '/api/sso/deprovision') {
+    if (url === '/api/sso/deprovision') {
+      if (!this.ssoWebhookSecret) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'SSO webhook secret not configured; failing closed' }));
+        return;
+      }
+
+      // Handle Okta one-time verification challenge if requested
+      const challenge = req.headers['x-okta-verification-challenge'];
+      if (challenge) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ verification: challenge }));
+        return;
+      }
+
+      if (method !== 'POST') {
+        res.writeHead(405, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Method not allowed' }));
+        return;
+      }
+
       const body = await this.readRequestBody(req);
+
+      // Verify webhook authentication (P0 Security Invariant: fail-closed if unauthenticated)
+      const signatureHeader = (req.headers['x-okta-signature'] || req.headers['x-webhook-signature']) as string | undefined;
+      let isAuthorized = false;
+
+      if (signatureHeader) {
+        const expectedHmac = crypto.createHmac('sha256', this.ssoWebhookSecret).update(body).digest('base64');
+        const expectedHex = crypto.createHmac('sha256', this.ssoWebhookSecret).update(body).digest('hex');
+        if (
+          constantTimeEquals(signatureHeader, expectedHmac) ||
+          constantTimeEquals(signatureHeader, expectedHex)
+        ) {
+          isAuthorized = true;
+        }
+      }
+
+      if (!isAuthorized) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unauthorized: missing or invalid SSO webhook signature' }));
+        return;
+      }
+
       try {
         const payload = JSON.parse(body);
         if (payload.userId) {
           await this.oauthValidator.getRevocationStore().revokeUser(payload.userId);
+          try {
+            await db.insert(schema.auditEvents).values({
+              actor_id: 'sso_webhook',
+              action: 'revoke_vault',
+              target_id: payload.userId,
+              metadata: { reason: payload.reason || 'sso_deprovision', provider: payload.provider || 'sso' },
+            });
+          } catch (auditErr) {
+            console.error('Failed to log deprovision audit event:', auditErr);
+          }
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ revoked: true, userId: payload.userId }));
           return;
@@ -174,7 +260,11 @@ export class McpGatewayServer {
       const authorizedTools = this.policy.computeAuthorizedTools(vaultAccess);
 
       const rolesMap = new Map<string, string>();
-      vaultAccess.forEach((v) => rolesMap.set(v.vaultId, v.role));
+      const vaultModesMap = new Map<string, 'open' | 'locked'>();
+      vaultAccess.forEach((v) => {
+        rolesMap.set(v.vaultId, v.role);
+        vaultModesMap.set(v.vaultId, v.mode);
+      });
 
       const rawBody = await this.readRequestBody(req);
       let jsonRpcMessage: JsonRpcRequest;
@@ -197,6 +287,7 @@ export class McpGatewayServer {
       const response = await this.transport.handleMessage(jsonRpcMessage, {
         userId: claims.userId,
         roles: rolesMap,
+        vaultModes: vaultModesMap,
         authorizedTools,
       });
 
@@ -216,11 +307,15 @@ export class McpGatewayServer {
     res.end(JSON.stringify({ error: 'Endpoint not found' }));
   }
 
-  public listen(): Promise<number> {
+  public listen(port?: number): Promise<number> {
+    if (port !== undefined) this.port = port;
     return new Promise((resolve) => {
       this.server = http.createServer((req, res) => this.handleHttpRequest(req, res));
       this.server.listen(this.port, () => {
-        resolve(this.port);
+        const addr = this.server?.address();
+        const boundPort = typeof addr === 'object' && addr ? addr.port : this.port;
+        this.port = boundPort;
+        resolve(boundPort);
       });
     });
   }
@@ -228,6 +323,9 @@ export class McpGatewayServer {
   public close(): Promise<void> {
     return new Promise((resolve, reject) => {
       if (!this.server) return resolve();
+      if (typeof this.server.closeAllConnections === 'function') {
+        this.server.closeAllConnections();
+      }
       this.server.close((err) => (err ? reject(err) : resolve()));
     });
   }

@@ -17,6 +17,12 @@ export interface SkillToolSchema {
     required?: string[];
     additionalProperties?: boolean;
   };
+  execution?: {
+    kind: 'helper';
+    runtime: 'node' | 'python' | 'python3' | 'bash';
+    entrypoint: string;
+    arguments?: string[];
+  };
 }
 
 export interface SkillPackage {
@@ -24,6 +30,26 @@ export interface SkillPackage {
   toolSchema: SkillToolSchema;
   scripts: Map<string, string>; // filename -> code
   templates: Map<string, string>;
+}
+
+export const ENCRYPTED_SKILL_PACKAGE_FORMAT = 'tkxel-skill-package/v1';
+
+export interface EncryptedSkillPackageV1 {
+  format: typeof ENCRYPTED_SKILL_PACKAGE_FORMAT;
+  skillMd: string;
+  toolJson: SkillToolSchema;
+  files: Record<string, string>;
+}
+
+export interface ParsedSkillPayload {
+  manifest: SkillManifest;
+  toolSchema?: SkillToolSchema;
+  helper?: {
+    runtime: 'node' | 'python' | 'python3' | 'bash';
+    source: string;
+    arguments: string[];
+  };
+  packaged: boolean;
 }
 
 export class ValidationError extends Error {
@@ -37,6 +63,9 @@ export class ValidationError extends Error {
  * Validates Agent Skill packages and input parameter schemas (FR-32).
  */
 export class SkillManifestValidator {
+  private static readonly MAX_HELPER_SOURCE_BYTES = 1024 * 1024;
+  private static readonly SAFE_PACKAGE_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[a-zA-Z0-9._/-]+$/;
+
   /**
    * Parses and validates raw SKILL.md content.
    */
@@ -94,7 +123,109 @@ export class SkillManifestValidator {
       throw new ValidationError("Invalid tool.json: 'inputSchema' must be of type 'object' with a 'properties' map.");
     }
 
+    if (obj.execution !== undefined) {
+      if (!obj.execution || typeof obj.execution !== 'object' || obj.execution.kind !== 'helper') {
+        throw new ValidationError("Invalid tool.json: 'execution.kind' must be 'helper'.");
+      }
+      if (!['node', 'python', 'python3', 'bash'].includes(obj.execution.runtime)) {
+        throw new ValidationError('Invalid tool.json: helper runtime is not supported.');
+      }
+      if (
+        typeof obj.execution.entrypoint !== 'string' ||
+        !SkillManifestValidator.SAFE_PACKAGE_PATH.test(obj.execution.entrypoint)
+      ) {
+        throw new ValidationError('Invalid tool.json: helper entrypoint must be a safe package-relative path.');
+      }
+      if (
+        obj.execution.arguments !== undefined &&
+        (!Array.isArray(obj.execution.arguments) ||
+          obj.execution.arguments.length > 16 ||
+          obj.execution.arguments.some(
+            (arg: unknown) => typeof arg !== 'string' || arg.length > 256 || arg.includes('\0')
+          ))
+      ) {
+        throw new ValidationError('Invalid tool.json: helper arguments must be at most 16 short strings.');
+      }
+    }
+
     return obj as SkillToolSchema;
+  }
+
+  /**
+   * Parses the plaintext obtained from an encrypted skill blob. Prompt-only legacy
+   * SKILL.md payloads remain supported. Executable helpers must use the versioned
+   * package envelope so their entrypoint and source are validated together.
+   */
+  public parseEncryptedPayload(rawContent: string): ParsedSkillPayload {
+    const trimmed = rawContent.trim();
+    if (!trimmed.startsWith('{')) {
+      return {
+        manifest: this.parseSkillMd(rawContent),
+        packaged: false,
+      };
+    }
+
+    let candidate: unknown;
+    try {
+      candidate = JSON.parse(trimmed);
+    } catch {
+      throw new ValidationError('Invalid encrypted skill package.');
+    }
+
+    if (!candidate || typeof candidate !== 'object') {
+      throw new ValidationError('Invalid encrypted skill package.');
+    }
+
+    const pkg = candidate as Record<string, unknown>;
+    if (pkg.format !== ENCRYPTED_SKILL_PACKAGE_FORMAT) {
+      throw new ValidationError('Unsupported encrypted skill package format.');
+    }
+    if (typeof pkg.skillMd !== 'string' || !pkg.skillMd) {
+      throw new ValidationError('Invalid encrypted skill package: SKILL.md is required.');
+    }
+    if (!pkg.files || typeof pkg.files !== 'object' || Array.isArray(pkg.files)) {
+      throw new ValidationError('Invalid encrypted skill package: files map is required.');
+    }
+
+    const manifest = this.parseSkillMd(pkg.skillMd);
+    const toolSchema = this.validateToolSchema(pkg.toolJson);
+    if (this.normalizeName(manifest.name) !== this.normalizeName(toolSchema.name)) {
+      throw new ValidationError('Encrypted skill package manifest and tool schema names do not match.');
+    }
+
+    const files = pkg.files as Record<string, unknown>;
+    for (const [filePath, source] of Object.entries(files)) {
+      if (!SkillManifestValidator.SAFE_PACKAGE_PATH.test(filePath) || typeof source !== 'string') {
+        throw new ValidationError('Invalid encrypted skill package file entry.');
+      }
+    }
+
+    let helper: ParsedSkillPayload['helper'];
+    if (toolSchema.execution) {
+      const source = files[toolSchema.execution.entrypoint];
+      if (typeof source !== 'string') {
+        throw new ValidationError('Encrypted skill package helper entrypoint is missing.');
+      }
+      if (Buffer.byteLength(source, 'utf-8') > SkillManifestValidator.MAX_HELPER_SOURCE_BYTES) {
+        throw new ValidationError('Encrypted skill package helper exceeds the size limit.');
+      }
+      helper = {
+        runtime: toolSchema.execution.runtime,
+        source,
+        arguments: [...(toolSchema.execution.arguments || [])],
+      };
+    }
+
+    return {
+      manifest,
+      toolSchema,
+      helper,
+      packaged: true,
+    };
+  }
+
+  public normalizeName(value: string): string {
+    return value.trim().toLowerCase().replace(/_/g, '-');
   }
 
   /**

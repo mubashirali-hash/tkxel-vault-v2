@@ -75,3 +75,48 @@ To prevent architectural drift and ensure that all emerging technical domains ar
    - **Agent Name & Role:** e.g., `cloud_sre_agent.md` (Cloud Infrastructure & SRE Lead).
    - **Reason for Suggestion:** Domain gap or milestone trigger.
    - **Proposed Specification & Skill:** Draft markdown file paths and skill definitions.
+
+---
+
+## 6. Token-Efficient Verification Protocol
+
+Agents must preserve the existing test suite. Never delete, weaken, skip, or replace tests merely to reduce agent usage. Reduce repeated execution and verbose reporting instead.
+
+### 6.1 Verification Levels
+
+1. **During implementation — focused verification only:**
+   - Run the smallest test file or command that directly covers the changed behavior.
+   - Use compact output when supported, for example:
+     ```powershell
+     node --test --test-reporter=dot <focused-test-file>
+     ```
+   - Do not print or repeat every successful test name in reports.
+2. **At chunk completion — affected package only:**
+   - Run the complete test suite and build for the package that changed.
+   - Do not rerun unrelated packages.
+3. **At review gates — monorepo verification when justified:**
+   - Run the complete uncached monorepo suite only when approving a review gate, verifying a release candidate, changing shared packages or cross-service contracts, or when the user explicitly requests it.
+   - Documentation-only and narrowly scoped test-only corrections do not require a full monorepo rerun unless they change shared test discovery or configuration.
+4. **Environment-specific acceptance:**
+   - Run Docker, PostgreSQL/pgvector, Linux/gVisor, performance, and deployment suites only for the review gate or invariant they prove.
+   - Do not repeatedly rerun an unavailable environment check. Preserve and report the exact blocker.
+
+### 6.2 Output and Evidence Rules
+
+- For successful commands, report only the command, pass/fail count, exit status, and relevant duration.
+- For failures, report only the failing test, the relevant error, the smallest useful stack-trace section, and the suspected production file.
+- Do not paste complete successful test or build logs into chat, `CODEX_MEMORY.md`, `PROJECT_MEMORY.md`, or remediation documents.
+- Record summarized evidence in project memory. Keep raw logs outside living memory documents unless a specific failure requires them.
+- Do not calculate or claim a new full-monorepo passing total unless the complete monorepo suite was actually executed.
+- Results for unchanged packages must be labeled as last recorded evidence, not as newly rerun evidence.
+- Package-level results may be updated independently without rerunning unrelated packages.
+
+### 6.3 Test Preservation and Rerun Discipline
+
+- Never delete security, authorization, encryption, isolation, database-boundary, or regression tests to save time or tokens.
+- Never replace required database or production-path integration evidence with mocks.
+- Never change assertions merely to turn a failure into a pass.
+- Never suppress warnings globally to obtain clean output.
+- Do not rerun an already passing test without a relevant code, configuration, dependency, or environment change.
+- A test may be consolidated or removed only in a separate review demonstrating that it is fully duplicated and provides no unique behavioral, security, or acceptance evidence.
+- If a focused test passes and no shared code changed, proceed to the affected package verification instead of rerunning earlier unrelated suites.

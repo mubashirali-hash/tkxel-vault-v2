@@ -7,6 +7,8 @@
 .markdown-editor__save-state[data-state='saved'] { color: #047857; }
 .markdown-editor__save-state[data-state='offline'] { color: #b45309; }
 .markdown-editor__save-state[data-state='saving'] { color: var(--tk-primary, #0755e9); }
+.markdown-editor__save-state[data-state='error'] { color: #b42318; }
+
 @keyframes spinSlow {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }

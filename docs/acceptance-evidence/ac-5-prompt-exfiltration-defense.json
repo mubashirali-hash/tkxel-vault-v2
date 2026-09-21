@@ -1,0 +1,15 @@
+{
+  "criterion": "AC-5",
+  "name": "Prompt Exfiltration Defense",
+  "status": "passed",
+  "executionTimeMs": 1943,
+  "probesEvaluatedCount": 22,
+  "probesNeutralizedCount": 22,
+  "kmsProviderUsed": "http contract-test double (HttpKmsProvider wire protocol with bearer authentication)",
+  "claudeClientUsed": "anthropic contract-test double (AnthropicClaudeClient HTTP v1/messages wire protocol)",
+  "endpointsTested": [
+    "http://127.0.0.1:64869/api/run-skill",
+    "http://127.0.0.1:64869/api/ask-vault"
+  ],
+  "leakageDetected": false
+}

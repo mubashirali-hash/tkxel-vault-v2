@@ -15,6 +15,8 @@ import {
   createLockedRetrievalHandlers,
 } from './tools/locked-tools.js';
 import { PostgresOpenVaultStore } from './tools/postgres-store.js';
+import { ToolPalettePolicy } from './auth/policy.js';
+import { getUserAccessibleVaults } from '@tkxel-vault/vault-core';
 
 /**
  * Standard Stdio JSON-RPC MCP Server.
@@ -39,22 +41,36 @@ async function runStdioMcpServer() {
   transport.registerTool(RUN_SKILL_TOOL, lockedHandlers.handleRunSkill);
   transport.registerTool(ASK_VAULT_TOOL, lockedHandlers.handleAskVault);
 
+  const userId = process.env.DESKTOP_USER_ID || process.env.USER_ID || 'desktop-agent';
+  let userVaults: Array<{ vaultId: string; mode: 'open' | 'locked'; role: string }> = [];
+  try {
+    userVaults = await getUserAccessibleVaults(userId);
+  } catch (err) {
+    console.error('Error fetching vault access for stdio user:', err);
+  }
+
+  // Fallback for dev mode only if explicitly enabled
+  if (userVaults.length === 0 && process.env.NODE_ENV !== 'production' && process.env.ENABLE_DEV_AUTH_BYPASS === 'true') {
+    userVaults = [
+      { vaultId: '11111111-1111-1111-1111-111111111111', mode: 'open', role: 'editor' },
+      { vaultId: '22222222-2222-2222-2222-222222222222', mode: 'locked', role: 'consumer' },
+    ];
+  }
+
+  const policy = new ToolPalettePolicy();
+  const authorizedTools = policy.computeAuthorizedTools(userVaults as any);
+  const roles = new Map<string, string>();
+  const vaultModes = new Map<string, 'open' | 'locked'>();
+  for (const v of userVaults) {
+    roles.set(v.vaultId, v.role);
+    vaultModes.set(v.vaultId, v.mode);
+  }
+
   const callerContext = {
-    userId: 'desktop-agent',
-    roles: new Map<string, string>([
-      ['11111111-1111-1111-1111-111111111111', 'editor'],
-      ['22222222-2222-2222-2222-222222222222', 'consumer'],
-    ]),
-    authorizedTools: new Set<string>([
-      'search',
-      'get_page',
-      'get_links',
-      'get_context',
-      'add_note',
-      'list_skills',
-      'run_skill',
-      'ask_vault',
-    ]),
+    userId,
+    roles,
+    vaultModes,
+    authorizedTools,
   };
 
   // Log to stderr only (stdout is reserved exclusively for JSON-RPC messages)

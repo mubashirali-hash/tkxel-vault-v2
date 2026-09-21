@@ -10,14 +10,14 @@ tkxel Vault provides two modes for agents to connect:
 
 | Mode | Use Case | Protocol | Endpoint / Command |
 | :--- | :--- | :--- | :--- |
-| **Stdio Sub-process** | Claude Desktop, Cursor, Antigravity, local CLI agents | JSON-RPC over `stdio` | `node services/mcp-gateway/dist/stdio.js` |
+| **Stdio Sub-process** | Claude Desktop, Cursor, Antigravity, local CLI agents | JSON-RPC over `stdio` | `node <TKXEL_VAULT_ROOT>/services/mcp-gateway/dist/stdio.js` |
 | **Streamable HTTP Gateway** | Cloud AI connectors, Claude.ai Custom Connectors | MCP HTTP Streamable | `http://localhost:3001/mcp` |
 
 ---
 
 ## 2. Option A: Connecting Anthropic Claude Desktop (Recommended for Local)
 
-To give Claude Desktop access to your entire markdown knowledge hub and locked skills:
+To connect Claude Desktop to vaults you are authorized to use:
 
 1. Open your Claude Desktop configuration file:
    - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
@@ -30,10 +30,10 @@ To give Claude Desktop access to your entire markdown knowledge hub and locked s
     "tkxel-vault": {
       "command": "node",
       "args": [
-        "c:/Users/mubashir.ali/Desktop/tkxel_vault_SRS/services/mcp-gateway/dist/stdio.js"
+        "<TKXEL_VAULT_ROOT>/services/mcp-gateway/dist/stdio.js"
       ],
       "env": {
-        "DATABASE_URL": "postgres://postgres:postgrespassword@localhost:5432/tkxel_vault"
+        "DATABASE_URL": "<set-through-your-local-secret-manager>"
       }
     }
   }
@@ -41,14 +41,14 @@ To give Claude Desktop access to your entire markdown knowledge hub and locked s
 ```
 
 3. Restart Claude Desktop.
-4. You will see a hammer/tool icon in the bottom right corner with the following 8 tools available:
+4. The gateway computes the tool palette for each authenticated request. Open-vault readers may receive retrieval tools; locked-vault consumers receive only the locked tools. The following names describe the possible catalog, not a guarantee that every caller receives every tool:
    - `search`: Search the entire Markdown knowledge graph with multi-keyword ILIKE matching.
    - `get_page`: Fetch full markdown notes, front matter, tags, and backlinks by title.
    - `get_links`: Inspect 1-hop and 2-hop bidirectional graph links and connected nodes.
    - `get_context`: Assemble token-budgeted context packages with target pages and related backlinks.
    - `add_note`: Allow Claude to take notes and create draft pages in the vault.
-   - `list_skills`: Discover all proprietary locked skills with their `vaultId`, name, description, and parameters.
-   - `run_skill`: Execute locked skills in zero-read sandbox without leaking raw proprietary IP (`vaultId` is optional and auto-resolved).
+   - `list_skills`: Discover authorized proprietary locked skills with their permitted metadata and parameters.
+   - `run_skill`: Execute a locked skill in the zero-read sandbox without leaking raw proprietary IP. The requested `vaultId` is required and re-authorized server-side.
    - `ask_vault`: Query locked proprietary vaults without exposing raw markdown.
 
 ---
@@ -59,7 +59,7 @@ If your agent connects via HTTP (such as Claude.ai Custom Connector or remote ag
 
 1. Start the Remote MCP Gateway:
    ```bash
-   npm --prefix services/mcp-gateway run start
+   pnpm --filter @tkxel-vault/mcp-gateway start
    ```
    The gateway listens on `http://localhost:3001` with the MCP endpoint at `http://localhost:3001/mcp`.
 2. Provide Bearer Authentication header (OAuth 2.1 JWT / corporate SSO token).

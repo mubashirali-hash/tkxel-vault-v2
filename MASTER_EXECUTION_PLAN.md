@@ -1,5 +1,8 @@
 # Master Production Execution Plan: tkxel Vault
 
+> [!WARNING]
+> **Production sign-off reopened on 2026-09-16.** This file records the original build plan and historical review gates. Its approval markers are not current compliance evidence. Continue with [SENIOR_REVIEW_REMEDIATION_PLAN.md](./SENIOR_REVIEW_REMEDIATION_PLAN.md) and use [CODEX_MEMORY.md](./CODEX_MEMORY.md) for the audited handoff state.
+
 This document defines the authoritative, production-grade engineering roadmap for **tkxel Vault**, broken down into **6 Sequential Epics** and **24 Atomic Chunks**.
 
 ---
@@ -198,4 +201,4 @@ graph TD
   - Finalize all ADRs in `docs/adr/` (ADR-001 through ADR-009).
   - Author complete production operations runbook: KMS key rotation drills, database backup/recovery verification (RPO 24h, RTO 4h), and monitoring alert configuration.
 
-> 🛑 **Review Gate 6:** Final Security Audit & Acceptance Verification across all 10 SRS Acceptance Criteria. **FINAL PRODUCTION RELEASE SIGN-OFF [ALL 10 CRITERIA SATISFIED].**
+> 🛑 **Review Gate 6:** The original sign-off was withdrawn on 2026-09-16 after a production-path review found isolation, storage, runner, retrieval, and assurance gaps. Those remediation criteria were subsequently accepted by the user on 2026-09-18; this does **not** approve Review Gates 7 or 8. See the production-integrity remediation plan.

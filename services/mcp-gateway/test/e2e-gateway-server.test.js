@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import crypto from 'node:crypto';
 import { McpGatewayServer } from '../dist/server.js';
 import { OAuthValidator, InMemoryRevocationStore } from '../dist/auth/oauth.js';
 
@@ -55,6 +56,7 @@ test('E2E MCP Gateway: handles health, authentication, initialize handshake, and
     port: 3899,
     oauthValidator: oauth,
     vaultStore: mockVaultStore,
+    ssoWebhookSecret: 'okta-webhook-secret-acceptance-key-32b!',
     accessResolver: async (userId) => {
       if (userId === 'usr_allowed') {
         return [{ vaultId: 'vlt_1', mode: 'open', role: 'reader' }];
@@ -124,11 +126,26 @@ test('E2E MCP Gateway: handles health, authentication, initialize handshake, and
     assert.ok(toolsRes.json.result.tools.some((t) => t.name === 'search'));
     assert.ok(toolsRes.json.result.tools.some((t) => t.name === 'get_context'));
 
-    // 5. SSO Deprovisioning webhook
-    const deprovRes = await makeHttpRequest('http://127.0.0.1:3899/api/sso/deprovision', {
+    // 5. SSO Deprovisioning webhook (Unauthenticated must be rejected with 401)
+    const unauthDeprovRes = await makeHttpRequest('http://127.0.0.1:3899/api/sso/deprovision', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId: 'usr_allowed' }),
+    });
+    assert.equal(unauthDeprovRes.statusCode, 401, 'Unauthenticated SSO deprovision must fail with 401');
+
+    // 5b. Authenticated SSO Deprovisioning webhook
+    const deprovisionBody = JSON.stringify({ userId: 'usr_allowed' });
+    const deprovRes = await makeHttpRequest('http://127.0.0.1:3899/api/sso/deprovision', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Okta-Signature': crypto
+          .createHmac('sha256', 'okta-webhook-secret-acceptance-key-32b!')
+          .update(deprovisionBody)
+          .digest('base64'),
+      },
+      body: deprovisionBody,
     });
     assert.equal(deprovRes.statusCode, 200);
     assert.equal(deprovRes.json.revoked, true);
@@ -149,6 +166,44 @@ test('E2E MCP Gateway: handles health, authentication, initialize handshake, and
     assert.equal(postDeprovRes.statusCode, 401);
     assert.match(postDeprovRes.json.error.message, /access has been revoked/);
   } finally {
+    await server.close();
+  }
+});
+
+test('Regression: Default access resolver fails closed to empty array [] on lookup error or missing memberships (no vlt_default fallback)', async () => {
+  const server = new McpGatewayServer({ port: 3898 });
+  const defaultResolver = server.getAccessResolver();
+  assert.ok(typeof defaultResolver === 'function');
+
+  // Calling default resolver for an unknown user or when DB has no records returns []
+  const result = await defaultResolver('usr_nonexistent_unknown_9999');
+  assert.deepEqual(result, [], 'Must return empty array [] and never fallback to vlt_default');
+});
+
+test('Regression: SSO deprovision webhook fails closed with 500 when secret is not configured', async () => {
+  const origOkta = process.env.OKTA_WEBHOOK_SECRET;
+  const origSso = process.env.SSO_WEBHOOK_SECRET;
+  delete process.env.OKTA_WEBHOOK_SECRET;
+  delete process.env.SSO_WEBHOOK_SECRET;
+
+  const server = new McpGatewayServer({ port: 3897 });
+  await server.listen();
+
+  try {
+    const res = await makeHttpRequest('http://127.0.0.1:3897/api/sso/deprovision', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer any-token',
+      },
+      body: JSON.stringify({ userId: 'usr_victim' }),
+    });
+
+    assert.equal(res.statusCode, 500);
+    assert.match(res.json.error, /secret not configured/);
+  } finally {
+    if (origOkta) process.env.OKTA_WEBHOOK_SECRET = origOkta;
+    if (origSso) process.env.SSO_WEBHOOK_SECRET = origSso;
     await server.close();
   }
 });

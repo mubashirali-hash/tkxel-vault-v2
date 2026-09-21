@@ -42,6 +42,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "migrate": "node dist/scripts/migrate.js",
     "test": "node --test test/**/*.test.js",
     "typecheck": "tsc --noEmit",
     "clean": "rimraf dist"

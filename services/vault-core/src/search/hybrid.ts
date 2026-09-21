@@ -6,7 +6,10 @@ export interface SearchResultItem {
   title: string;
   content: string;
   score: number;
-  source: 'bm25' | 'vector' | 'hybrid';
+  source: 'lexical' | 'vector' | 'hybrid' | 'bm25';
+  type?: string;
+  tags?: string[];
+  position?: number;
 }
 
 export interface ContextBundle {
@@ -41,15 +44,25 @@ export class HybridSearchEngine {
     vectorResults: SearchResultItem[],
     limit: number = 10
   ): SearchResultItem[] {
-    const scoreMap = new Map<string, { item: SearchResultItem; rrfScore: number }>();
+    const scoreMap = new Map<
+      string,
+      {
+        item: SearchResultItem;
+        rrfScore: number;
+        inLexical: boolean;
+        inVector: boolean;
+      }
+    >();
 
-    // Process BM25 rankings
+    // Process BM25 / Lexical rankings
     bm25Results.forEach((item, index) => {
       const rank = index + 1;
       const score = 1 / (this.rrfK + rank);
       scoreMap.set(item.id, {
-        item: { ...item, source: 'hybrid' },
+        item,
         rrfScore: score,
+        inLexical: true,
+        inVector: false,
       });
     });
 
@@ -60,22 +73,37 @@ export class HybridSearchEngine {
       const existing = scoreMap.get(item.id);
       if (existing) {
         existing.rrfScore += score;
+        existing.inVector = true;
       } else {
         scoreMap.set(item.id, {
-          item: { ...item, source: 'hybrid' },
+          item,
           rrfScore: score,
+          inLexical: false,
+          inVector: true,
         });
       }
     });
 
-    // Sort by RRF score descending
+    // Sort by RRF score descending and assign source accurately
     const sorted = Array.from(scoreMap.values())
       .sort((a, b) => b.rrfScore - a.rrfScore)
       .slice(0, limit)
-      .map((entry) => ({
-        ...entry.item,
-        score: entry.rrfScore,
-      }));
+      .map((entry) => {
+        let source: 'lexical' | 'vector' | 'hybrid';
+        if (entry.inLexical && entry.inVector) {
+          source = 'hybrid';
+        } else if (entry.inVector) {
+          source = 'vector';
+        } else {
+          source = 'lexical';
+        }
+
+        return {
+          ...entry.item,
+          source,
+          score: entry.rrfScore,
+        };
+      });
 
     return sorted;
   }

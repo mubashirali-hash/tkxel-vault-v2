@@ -46,7 +46,7 @@ export const ConvertNoteToSkillModal: React.FC<ConvertNoteToSkillModalProps> = (
       setName(slug || 'proprietary-skill');
 
       // 2. Use public catalog metadata without copying protected note content.
-      const rawBody = (note.front_matter.body as string) || '';
+      const rawBody = note.content || '';
       setDescription(`Protected capability created from ${note.title}.`);
 
       // 3. System Instructions: Full note markdown body

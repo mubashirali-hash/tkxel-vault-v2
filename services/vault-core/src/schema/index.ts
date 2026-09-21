@@ -8,8 +8,10 @@ import {
   boolean,
   timestamp,
   customType,
-  index
+  index,
+  check
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 // Custom pgvector type for vector(1536)
 export const vector = customType<{ data: number[]; driverData: string }>({
@@ -82,7 +84,6 @@ export const pages = pgTable(
     index('idx_pages_title').on(table.title)
   ]
 );
-
 // 3. Versions Table
 export const versions = pgTable(
   'versions',
@@ -121,7 +122,8 @@ export const links = pgTable(
   (table) => [
     index('idx_links_from').on(table.from_page_id),
     index('idx_links_to').on(table.to_page_id),
-    index('idx_links_target').on(table.raw_target)
+    index('idx_links_target').on(table.raw_target),
+    check('links_resolved_has_target', sql`${table.resolved} = (${table.to_page_id} IS NOT NULL)`)
   ]
 );
 
@@ -195,7 +197,7 @@ export const shares = pgTable(
     principal_id: varchar('principal_id', { length: 255 }).notNull(),
     role: varchar('role', { length: 32 })
       .notNull()
-      .$type<'editor' | 'reader' | 'consumer'>(),
+      .$type<'owner' | 'editor' | 'reader' | 'consumer'>(),
     granted_by: varchar('granted_by', { length: 255 }).notNull(),
     granted_at: timestamp('granted_at', { withTimezone: true }).defaultNow().notNull(),
     revoked_at: timestamp('revoked_at', { withTimezone: true })
@@ -223,3 +225,4 @@ export const auditEvents = pgTable(
     index('idx_audit_timestamp').on(table.timestamp)
   ]
 );
+

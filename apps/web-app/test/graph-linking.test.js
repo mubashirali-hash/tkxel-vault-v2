@@ -21,19 +21,19 @@ function linkNotes(sourcePage, targetPage, currentLinks) {
     };
   }
 
-  // Append wiki-link to source note markdown body
-  const currentBody = sourcePage.front_matter?.body || '';
+  // Append wiki-link to source note markdown content
+  const currentContent = sourcePage.content || '';
   const linkSyntax = `[[${targetPage.title}]]`;
-  const newBody = currentBody.trim()
-    ? `${currentBody}\n\n- ${linkSyntax}`
+  const newContent = currentContent.trim()
+    ? `${currentContent}\n\n- ${linkSyntax}`
     : `- ${linkSyntax}`;
+
+  const { body: _scrubbedBody, ...cleanFrontMatter } = sourcePage.front_matter || {};
 
   const updatedSourcePage = {
     ...sourcePage,
-    front_matter: {
-      ...sourcePage.front_matter,
-      body: newBody,
-    },
+    content: newContent,
+    front_matter: cleanFrontMatter,
     updated_at: new Date(),
   };
 
@@ -53,18 +53,18 @@ test('Graph Linking: successfully connects two notes and appends [[target]] to s
   const pageA = {
     id: 'pg_1',
     title: 'Architecture Decision',
+    content: '# Architecture\n\nInitial draft of system invariants.',
     front_matter: {
       title: 'Architecture Decision',
-      body: '# Architecture\n\nInitial draft of system invariants.',
     },
   };
 
   const pageB = {
     id: 'pg_2',
     title: 'Security Model',
+    content: '# Security\n\nZero-read locked vaults.',
     front_matter: {
       title: 'Security Model',
-      body: '# Security\n\nZero-read locked vaults.',
     },
   };
 
@@ -78,11 +78,12 @@ test('Graph Linking: successfully connects two notes and appends [[target]] to s
     from_page_id: 'pg_1',
     to_page_id: 'pg_2',
   });
-  assert.ok(result.updatedSourcePage.front_matter.body.includes('- [[Security Model]]'));
+  assert.ok(result.updatedSourcePage.content.includes('- [[Security Model]]'));
+  assert.equal(result.updatedSourcePage.front_matter.body, undefined, 'front_matter.body must not exist');
 });
 
 test('Graph Linking: rejects self-linking', () => {
-  const pageA = { id: 'pg_1', title: 'Self Note' };
+  const pageA = { id: 'pg_1', title: 'Self Note', content: '# Self Note' };
 
   assert.throws(() => {
     linkNotes(pageA, pageA, []);
@@ -90,8 +91,8 @@ test('Graph Linking: rejects self-linking', () => {
 });
 
 test('Graph Linking: avoids duplicate links if already connected', () => {
-  const pageA = { id: 'pg_1', title: 'Note 1', front_matter: { body: 'content' } };
-  const pageB = { id: 'pg_2', title: 'Note 2' };
+  const pageA = { id: 'pg_1', title: 'Note 1', content: 'content', front_matter: {} };
+  const pageB = { id: 'pg_2', title: 'Note 2', content: 'content 2' };
 
   const existingLinks = [{ from_page_id: 'pg_1', to_page_id: 'pg_2' }];
   const result = linkNotes(pageA, pageB, existingLinks);

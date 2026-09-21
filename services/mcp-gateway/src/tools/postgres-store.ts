@@ -1,6 +1,9 @@
 import { db } from '@tkxel-vault/vault-core/db';
 import * as schema from '@tkxel-vault/vault-core/schema';
-import { eq, and, or, ilike, sql } from 'drizzle-orm';
+import { getPageContent, createKmsProvider, EnvelopeEncryption } from '@tkxel-vault/vault-core';
+import { searchPages } from '@tkxel-vault/vault-core/search';
+import { eq, and } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { OpenVaultStore } from './open-retrieval.js';
 import crypto from 'node:crypto';
 
@@ -8,46 +11,19 @@ export class PostgresOpenVaultStore implements OpenVaultStore {
   /**
    * Search pages in the database using keyword and ILIKE matching on title, tags, and body.
    */
-  async search(query: string, vaultId?: string, limit: number = 10): Promise<Array<{ id: string; title: string; snippet: string }>> {
-    const targetVault = vaultId || '11111111-1111-1111-1111-111111111111';
-    const cleanQuery = `%${query.trim()}%`;
-    const tokens = query.trim().split(/\s+/).filter((t) => t.length > 1);
-
-    const conditions = [
-      ilike(schema.pages.title, cleanQuery),
-      sql`cast(${schema.pages.tags} as text) ILIKE ${cleanQuery}`,
-      sql`(${schema.pages.front_matter}->>'body') ILIKE ${cleanQuery}`
-    ];
-
-    for (const token of tokens) {
-      const term = `%${token}%`;
-      conditions.push(
-        ilike(schema.pages.title, term),
-        sql`cast(${schema.pages.tags} as text) ILIKE ${term}`,
-        sql`(${schema.pages.front_matter}->>'body') ILIKE ${term}`
-      );
+  async search(query: string, vaultId: string, limit: number = 10): Promise<Array<{ id: string; title: string; snippet: string }>> {
+    const targetVault = vaultId;
+    try {
+      const results = await searchPages(targetVault, query, limit);
+      return results.map((r: any) => ({
+        id: r.id,
+        title: r.title,
+        snippet: r.snippet || `# ${r.title}`,
+      }));
+    } catch (err) {
+      console.warn('Fallback in search:', err);
+      return [];
     }
-
-    const matches = await db
-      .select()
-      .from(schema.pages)
-      .where(
-        and(
-          eq(schema.pages.vault_id, targetVault),
-          or(...conditions)
-        )
-      )
-      .limit(limit);
-
-    return matches.map((p) => {
-      const body = (p.front_matter as any)?.body || '';
-      const snippet = body.length > 200 ? body.slice(0, 200) + '...' : body || `# ${p.title}`;
-      return {
-        id: p.id,
-        title: p.title,
-        snippet,
-      };
-    });
   }
 
   /**
@@ -55,9 +31,9 @@ export class PostgresOpenVaultStore implements OpenVaultStore {
    */
   async getPage(
     title: string,
-    vaultId?: string
+    vaultId: string
   ): Promise<{ title: string; content: string; tags: string[]; backlinks: string[] } | null> {
-    const targetVault = vaultId || '11111111-1111-1111-1111-111111111111';
+    const targetVault = vaultId;
     const normalizedTitle = title.trim().toLowerCase();
     const slugTitle = normalizedTitle.replace(/\s+/g, '_');
 
@@ -78,17 +54,22 @@ export class PostgresOpenVaultStore implements OpenVaultStore {
 
     if (!page) return null;
 
-    // Fetch backlinks
+    // Fetch backlinks strictly originating from pages within the same vault
+    const fromPages = alias(schema.pages, 'from_pages');
     const incomingLinks = await db
-      .select()
+      .select({
+        from_title: fromPages.title,
+      })
       .from(schema.links)
-      .where(eq(schema.links.to_page_id, page.id));
+      .innerJoin(fromPages, and(eq(schema.links.from_page_id, fromPages.id), eq(fromPages.vault_id, vaultId)))
+      .where(and(eq(schema.links.to_page_id, page.id), eq(schema.links.resolved, true)));
 
     const backlinkTitles = incomingLinks
-      .map((l) => allPages.find((p) => p.id === l.from_page_id)?.title)
+      .map((l) => l.from_title)
       .filter((t): t is string => Boolean(t));
 
-    const body = (page.front_matter as any)?.body || `# ${page.title}`;
+    const pageContentRec = await getPageContent(page.id);
+    const body = pageContentRec?.content || `# ${page.title}`;
 
     return {
       title: page.title,
@@ -103,10 +84,23 @@ export class PostgresOpenVaultStore implements OpenVaultStore {
    */
   async getLinks(
     pageId: string,
+    vaultId: string,
     maxHops: number = 1
   ): Promise<{ nodes: Array<{ id: string; label: string }>; edges: Array<{ from: string; to: string }> }> {
-    const allPages = await db.select().from(schema.pages);
-    const allDbLinks = await db.select().from(schema.links);
+    const allPages = await db.select().from(schema.pages).where(eq(schema.pages.vault_id, vaultId));
+
+    // Defensively query links strictly where both endpoints are in vaultId and resolved = true
+    const fromPages = alias(schema.pages, 'from_pages');
+    const toPages = alias(schema.pages, 'to_pages');
+    const vaultLinks = await db
+      .select({
+        from_page_id: schema.links.from_page_id,
+        to_page_id: schema.links.to_page_id,
+      })
+      .from(schema.links)
+      .innerJoin(fromPages, and(eq(schema.links.from_page_id, fromPages.id), eq(fromPages.vault_id, vaultId)))
+      .innerJoin(toPages, and(eq(schema.links.to_page_id, toPages.id), eq(toPages.vault_id, vaultId)))
+      .where(eq(schema.links.resolved, true));
 
     // Resolve focal page ID if title was passed
     const focal = allPages.find((p) => p.id === pageId || p.title.toLowerCase() === pageId.toLowerCase());
@@ -117,7 +111,7 @@ export class PostgresOpenVaultStore implements OpenVaultStore {
     const neighborhood = new Set<string>([focal.id]);
 
     // Hop 1
-    allDbLinks.forEach((l) => {
+    vaultLinks.forEach((l) => {
       if (l.from_page_id === focal.id && l.to_page_id) neighborhood.add(l.to_page_id);
       if (l.to_page_id === focal.id) neighborhood.add(l.from_page_id);
     });
@@ -125,7 +119,7 @@ export class PostgresOpenVaultStore implements OpenVaultStore {
     // Hop 2
     if (maxHops >= 2) {
       const hop1 = Array.from(neighborhood);
-      allDbLinks.forEach((l) => {
+      vaultLinks.forEach((l) => {
         if (hop1.includes(l.from_page_id) && l.to_page_id) neighborhood.add(l.to_page_id);
         if (l.to_page_id && hop1.includes(l.to_page_id)) neighborhood.add(l.from_page_id);
       });
@@ -135,7 +129,7 @@ export class PostgresOpenVaultStore implements OpenVaultStore {
       .filter((p) => neighborhood.has(p.id))
       .map((p) => ({ id: p.id, label: p.title }));
 
-    const edges = allDbLinks
+    const edges = vaultLinks
       .filter((l) => l.to_page_id && neighborhood.has(l.from_page_id) && neighborhood.has(l.to_page_id))
       .map((l) => ({ from: l.from_page_id, to: l.to_page_id! }));
 
@@ -147,6 +141,7 @@ export class PostgresOpenVaultStore implements OpenVaultStore {
    */
   async getContext(
     query: string,
+    vaultId: string,
     targetPage?: string,
     maxTokens: number = 4000
   ): Promise<{ markdown: string; tokenEstimate: number }> {
@@ -154,7 +149,7 @@ export class PostgresOpenVaultStore implements OpenVaultStore {
 
     // If no target page specified, find the most relevant via search
     if (!focalTitle) {
-      const searchResults = await this.search(query, undefined, 1);
+      const searchResults = await this.search(query, vaultId, 1);
       if (searchResults.length > 0) {
         focalTitle = searchResults[0].title;
       }
@@ -167,7 +162,7 @@ export class PostgresOpenVaultStore implements OpenVaultStore {
       };
     }
 
-    const pageData = await this.getPage(focalTitle);
+    const pageData = await this.getPage(focalTitle, vaultId);
     if (!pageData) {
       return {
         markdown: `Document "${focalTitle}" not found in authorized knowledge hub.`,
@@ -187,7 +182,7 @@ export class PostgresOpenVaultStore implements OpenVaultStore {
     if (pageData.backlinks.length > 0) {
       contextParts.push('\n---\n## Connected Backlinks Context');
       for (const backlink of pageData.backlinks.slice(0, 3)) {
-        const blData = await this.getPage(backlink);
+        const blData = await this.getPage(backlink, vaultId);
         if (blData) {
           const snippet = blData.content.length > 500 ? blData.content.slice(0, 500) + '...' : blData.content;
           contextParts.push(`### [[${blData.title}]]\n${snippet}`);
@@ -216,7 +211,7 @@ export class PostgresOpenVaultStore implements OpenVaultStore {
     authorId: string;
   }): Promise<{ noteId: string; status: string }> {
     const pageId = crypto.randomUUID();
-    const vaultId = params.vaultId || '11111111-1111-1111-1111-111111111111';
+    const vaultId = params.vaultId;
 
     await db.insert(schema.pages).values({
       id: pageId,
@@ -227,13 +222,33 @@ export class PostgresOpenVaultStore implements OpenVaultStore {
       tags: params.tags || ['mcp-agent'],
       front_matter: {
         title: params.title,
-        body: params.content,
         tags: params.tags || ['mcp-agent'],
         author: params.authorId,
       },
       created_at: new Date(),
       updated_at: new Date(),
     });
+
+    // Encrypt note content under Vault KMS DEK and store in versions
+    try {
+      const vaultRec = await db.select().from(schema.vaults).where(eq(schema.vaults.id, vaultId)).limit(1);
+      if (vaultRec.length > 0 && vaultRec[0].data_key_id) {
+        const kms = createKmsProvider();
+        const dek = await kms.unwrapKey(vaultRec[0].data_key_id);
+        const encryptedBlob = EnvelopeEncryption.encrypt(params.content, dek);
+        const [v] = await db.insert(schema.versions).values({
+          page_id: pageId,
+          number: 1,
+          status: 'published',
+          encrypted_blob: encryptedBlob,
+          created_by: params.authorId || 'claude-mcp-agent',
+          created_at: new Date(),
+        }).returning({ id: schema.versions.id });
+        await db.update(schema.pages).set({ current_version_id: v.id }).where(eq(schema.pages.id, pageId));
+      }
+    } catch (encErr) {
+      console.error('Failed to encrypt note version in addNote:', encErr);
+    }
 
     // Record audit entry
     await db.insert(schema.auditEvents).values({

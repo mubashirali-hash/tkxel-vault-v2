@@ -1,0 +1,13 @@
+{
+  "criterion": "AC-4",
+  "name": "Locked Skill Execution",
+  "status": "passed",
+  "executionTimeMs": 58,
+  "skillExecuted": "proprietary-scorer",
+  "endpointTested": "http://127.0.0.1:64869/api/run-skill",
+  "kmsProviderUsed": "http contract-test double (HttpKmsProvider wire protocol with bearer authentication)",
+  "claudeClientUsed": "anthropic contract-test double (AnthropicClaudeClient HTTP v1/messages wire protocol)",
+  "zeroReadVerified": true,
+  "auditEventsLogged": 2,
+  "liveLinuxRunscEvidence": "docs/acceptance-evidence/GATE-3-LINUX-RUNSC-EVIDENCE.log"
+}

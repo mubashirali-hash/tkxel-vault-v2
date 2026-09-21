@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "status": "in-remediation",
+  "commit": "2c486ffd181938bf71016b3c31be569a1ef7a422",
+  "environment": {
+    "host": "win32-x64-node-v24.18.0",
+    "container": "Linux x86_64 gVisor runsc (WSL2/Docker)",
+    "database": "PostgreSQL 16 with pgvector (Docker)",
+    "cache": "Redis 7 (Docker)"
+  },
+  "generatedAt": "2026-09-21T03:14:50.626Z",
+  "criteria": [
+    {
+      "id": "AC-1",
+      "status": "passed",
+      "evidence": [
+        {
+          "kind": "integration",
+          "path": "docs/acceptance-evidence/ac-1-context-retrieval.json",
+          "description": "Live PostgreSQL context assembly across linked pages with citation ranking"
+        }
+      ]
+    },
+    {
+      "id": "AC-2",
+      "status": "passed",
+      "evidence": [
+        {
+          "kind": "integration",
+          "path": "docs/acceptance-evidence/ac-2-link-refactoring.json",
+          "description": "Live link refactoring verified against PostgreSQL deferred constraint triggers and invariants"
+        }
+      ]
+    },
+    {
+      "id": "AC-3",
+      "status": "passed",
+      "evidence": [
+        {
+          "kind": "integration",
+          "path": "docs/acceptance-evidence/ac-3-bulk-vault-migration.json",
+          "description": "Multi-file vault import with YAML front-matter preservation and database encryption"
+        }
+      ]
+    },
+    {
+      "id": "AC-4",
+      "status": "passed",
+      "evidence": [
+        {
+          "kind": "integration",
+          "path": "docs/acceptance-evidence/ac-4-locked-skill-execution.json",
+          "description": "Zero-read locked skill orchestration over HTTP with DEK unwrap, in-memory execution, and audit log"
+        },
+        {
+          "kind": "acceptance",
+          "path": "docs/acceptance-evidence/GATE-3-LINUX-RUNSC-EVIDENCE.log",
+          "description": "Live gVisor runsc Linux acceptance execution log with 25 passing boundary checks"
+        }
+      ]
+    },
+    {
+      "id": "AC-5",
+      "status": "passed",
+      "evidence": [
+        {
+          "kind": "security",
+          "path": "docs/acceptance-evidence/ac-5-prompt-exfiltration-defense.json",
+          "description": "22 live adversarial prompt injection attacks executed over HTTP against locked endpoints and neutralized without information disclosure"
+        }
+      ]
+    },
+    {
+      "id": "AC-6",
+      "status": "passed",
+      "evidence": [
+        {
+          "kind": "security",
+          "path": "docs/acceptance-evidence/ac-6-multitenant-isolation.json",
+          "description": "Cross-tenant and cross-vault attacks executed over real MCP HTTP and REST HTTP boundaries rejected with zero disclosure"
+        }
+      ]
+    },
+    {
+      "id": "AC-7",
+      "status": "passed",
+      "evidence": [
+        {
+          "kind": "integration",
+          "path": "docs/acceptance-evidence/ac-7-rapid-revocation.json",
+          "description": "Atomic Redis revocation enforced in sub-second duration, exceeding <60s SLA"
+        }
+      ]
+    },
+    {
+      "id": "AC-8",
+      "status": "passed",
+      "evidence": [
+        {
+          "kind": "integration",
+          "path": "docs/acceptance-evidence/ac-8-sso-deprovisioning.json",
+          "description": "Live HTTP SSO deprovisioning webhook validates HMAC signatures, rejects unauthenticated/forged attacks with 401, and terminates active sessions with instant revocation and PostgreSQL audit event"
+        }
+      ]
+    },
+    {
+      "id": "AC-9",
+      "status": "passed",
+      "evidence": [
+        {
+          "kind": "security",
+          "path": "docs/acceptance-evidence/ac-9-penetration-testing.json",
+          "description": "Live MCP HTTP penetration test proves dynamic tool filtering and rejects raw markdown retrieval escalation attacks"
+        }
+      ]
+    },
+    {
+      "id": "AC-10",
+      "status": "passed",
+      "evidence": [
+        {
+          "kind": "security",
+          "path": "docs/acceptance-evidence/ac-10-zero-plaintext-storage.json",
+          "description": "SQL ciphertext canary audit proves 100% encryption at rest; export policies strictly enforced"
+        }
+      ]
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-import { McpToolDefinition, ToolCallResult } from '../transport/streamable-http.js';
+import { McpToolDefinition, ToolCallContext, ToolCallResult } from '../transport/streamable-http.js';
 
 export const SEARCH_TOOL: McpToolDefinition = {
   name: 'search',
@@ -13,14 +13,14 @@ export const SEARCH_TOOL: McpToolDefinition = {
       },
       vault_id: {
         type: 'string',
-        description: 'Optional vault ID to scope the search to a specific open vault.',
+        description: 'Authorized open vault ID to search.',
       },
       limit: {
         type: 'number',
         description: 'Maximum number of results to return (default 10).',
       },
     },
-    required: ['query'],
+    required: ['query', 'vault_id'],
   },
 };
 
@@ -37,10 +37,10 @@ export const GET_PAGE_TOOL: McpToolDefinition = {
       },
       vault_id: {
         type: 'string',
-        description: 'Optional vault ID where the page is stored.',
+        description: 'Authorized open vault ID where the page is stored.',
       },
     },
-    required: ['title'],
+    required: ['title', 'vault_id'],
   },
 };
 
@@ -55,12 +55,16 @@ export const GET_LINKS_TOOL: McpToolDefinition = {
         type: 'string',
         description: 'The unique ID or title of the focal document node.',
       },
+      vault_id: {
+        type: 'string',
+        description: 'Authorized open vault ID containing the page.',
+      },
       max_hops: {
         type: 'number',
         description: 'Graph traversal depth (1 or 2 hops, default 1).',
       },
     },
-    required: ['page_id'],
+    required: ['page_id', 'vault_id'],
   },
 };
 
@@ -75,6 +79,10 @@ export const GET_CONTEXT_TOOL: McpToolDefinition = {
         type: 'string',
         description: 'The user inquiry or subject to synthesize context for.',
       },
+      vault_id: {
+        type: 'string',
+        description: 'Authorized open vault ID used to assemble context.',
+      },
       target_page: {
         type: 'string',
         description: 'Optional primary document title to anchor the context graph.',
@@ -84,7 +92,7 @@ export const GET_CONTEXT_TOOL: McpToolDefinition = {
         description: 'Maximum token budget for the assembled context (default 4000).',
       },
     },
-    required: ['query'],
+    required: ['query', 'vault_id'],
   },
 };
 
@@ -120,11 +128,30 @@ export const ADD_NOTE_TOOL: McpToolDefinition = {
  * Mock data store interface for Open Vault retrieval tools.
  */
 export interface OpenVaultStore {
-  search(query: string, vaultId?: string, limit?: number): Promise<Array<{ id: string; title: string; snippet: string }>>;
-  getPage(title: string, vaultId?: string): Promise<{ title: string; content: string; tags: string[]; backlinks: string[] } | null>;
-  getLinks(pageId: string, maxHops?: number): Promise<{ nodes: Array<{ id: string; label: string }>; edges: Array<{ from: string; to: string }> }>;
-  getContext(query: string, targetPage?: string, maxTokens?: number): Promise<{ markdown: string; tokenEstimate: number }>;
+  search(query: string, vaultId: string, limit?: number): Promise<Array<{ id: string; title: string; snippet: string }>>;
+  getPage(title: string, vaultId: string): Promise<{ title: string; content: string; tags: string[]; backlinks: string[] } | null>;
+  getLinks(pageId: string, vaultId: string, maxHops?: number): Promise<{ nodes: Array<{ id: string; label: string }>; edges: Array<{ from: string; to: string }> }>;
+  getContext(query: string, vaultId: string, targetPage?: string, maxTokens?: number): Promise<{ markdown: string; tokenEstimate: number }>;
   addNote(params: { vaultId: string; title: string; content: string; tags?: string[]; authorId: string }): Promise<{ noteId: string; status: string }>;
+}
+
+const OPEN_READ_ROLES = new Set(['owner', 'editor', 'reader']);
+const OPEN_WRITE_ROLES = new Set(['owner', 'editor']);
+
+function requireAuthorizedOpenVault(
+  params: Record<string, unknown>,
+  context: ToolCallContext | undefined,
+  allowedRoles: Set<string>,
+): string {
+  const vaultId = typeof params.vault_id === 'string' ? params.vault_id.trim() : '';
+  const role = vaultId ? context?.roles.get(vaultId) : undefined;
+  const mode = vaultId ? context?.vaultModes?.get(vaultId) : undefined;
+
+  if (!vaultId || mode !== 'open' || !role || !allowedRoles.has(role)) {
+    throw new Error('not_allowed');
+  }
+
+  return vaultId;
 }
 
 /**
@@ -132,9 +159,9 @@ export interface OpenVaultStore {
  */
 export function createOpenRetrievalHandlers(store: OpenVaultStore) {
   return {
-    handleSearch: async (params: Record<string, unknown>): Promise<ToolCallResult> => {
+    handleSearch: async (params: Record<string, unknown>, context: ToolCallContext): Promise<ToolCallResult> => {
       const query = String(params.query || '');
-      const vaultId = params.vault_id ? String(params.vault_id) : undefined;
+      const vaultId = requireAuthorizedOpenVault(params, context, OPEN_READ_ROLES);
       const limit = Number(params.limit || 10);
 
       const results = await store.search(query, vaultId, limit);
@@ -148,13 +175,13 @@ export function createOpenRetrievalHandlers(store: OpenVaultStore) {
       };
     },
 
-    handleGetPage: async (params: Record<string, unknown>): Promise<ToolCallResult> => {
+    handleGetPage: async (params: Record<string, unknown>, context: ToolCallContext): Promise<ToolCallResult> => {
       const title = String(params.title || '');
-      const vaultId = params.vault_id ? String(params.vault_id) : undefined;
+      const vaultId = requireAuthorizedOpenVault(params, context, OPEN_READ_ROLES);
 
       const page = await store.getPage(title, vaultId);
       if (!page) {
-        throw new Error(`Page '${title}' not found or access not allowed.`);
+        throw new Error('not_found');
       }
 
       const formatted = `# ${page.title}\n\n${page.content}\n\n---\n**Tags:** ${page.tags.join(', ')}\n**Backlinks:** ${page.backlinks.join(', ')}`;
@@ -168,11 +195,12 @@ export function createOpenRetrievalHandlers(store: OpenVaultStore) {
       };
     },
 
-    handleGetLinks: async (params: Record<string, unknown>): Promise<ToolCallResult> => {
+    handleGetLinks: async (params: Record<string, unknown>, context: ToolCallContext): Promise<ToolCallResult> => {
       const pageId = String(params.page_id || '');
+      const vaultId = requireAuthorizedOpenVault(params, context, OPEN_READ_ROLES);
       const maxHops = Number(params.max_hops || 1);
 
-      const graph = await store.getLinks(pageId, maxHops);
+      const graph = await store.getLinks(pageId, vaultId, maxHops);
       return {
         content: [
           {
@@ -183,17 +211,18 @@ export function createOpenRetrievalHandlers(store: OpenVaultStore) {
       };
     },
 
-    handleGetContext: async (params: Record<string, unknown>): Promise<ToolCallResult> => {
+    handleGetContext: async (params: Record<string, unknown>, context: ToolCallContext): Promise<ToolCallResult> => {
       const query = String(params.query || '');
+      const vaultId = requireAuthorizedOpenVault(params, context, OPEN_READ_ROLES);
       const targetPage = params.target_page ? String(params.target_page) : undefined;
       const maxTokens = Number(params.max_tokens || 4000);
 
-      const context = await store.getContext(query, targetPage, maxTokens);
+      const contextResult = await store.getContext(query, vaultId, targetPage, maxTokens);
       return {
         content: [
           {
             type: 'text',
-            text: context.markdown,
+            text: contextResult.markdown,
           },
         ],
       };
@@ -201,9 +230,9 @@ export function createOpenRetrievalHandlers(store: OpenVaultStore) {
 
     handleAddNote: async (
       params: Record<string, unknown>,
-      ctx: { userId: string }
+      ctx: ToolCallContext
     ): Promise<ToolCallResult> => {
-      const vaultId = String(params.vault_id || '');
+      const vaultId = requireAuthorizedOpenVault(params, ctx, OPEN_WRITE_ROLES);
       const title = String(params.title || '');
       const content = String(params.content || '');
       const tags = Array.isArray(params.tags) ? (params.tags as string[]) : undefined;

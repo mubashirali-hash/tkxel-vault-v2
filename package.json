@@ -7,7 +7,10 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
+    "db:migrate": "pnpm --filter @tkxel-vault/vault-core migrate",
     "test": "turbo run test",
+    "test:release-claims": "node --test scripts/verify-release-claims.test.mjs && node scripts/verify-release-claims.mjs",
+    "verify:release-claims": "node scripts/verify-release-claims.mjs",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "clean": "turbo run clean",

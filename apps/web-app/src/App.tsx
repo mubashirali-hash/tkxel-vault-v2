@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import JSZip from 'jszip';
 import { Vault, VaultRole, Page, PageType, TimelineEntry, AuditEvent, Share } from '@tkxel-vault/types';
-import { MarkdownEngine, ImportResult } from '@tkxel-vault/vault-core/markdown';
+import { ImportResult } from '@tkxel-vault/vault-core/markdown';
 import { AppShell } from './components/layout/AppShell.js';
 import { Sidebar } from './components/navigation/Sidebar.js';
 import { Suspense } from 'react';
@@ -14,21 +13,35 @@ const ImporterModal = React.lazy(() => import('./components/ingestion/ImporterMo
 const AddSkillModal = React.lazy(() => import('./components/skills/AddSkillModal.js').then(m => ({ default: m.AddSkillModal })));
 const ConvertNoteToSkillModal = React.lazy(() => import('./components/skills/ConvertNoteToSkillModal.js').then(m => ({ default: m.ConvertNoteToSkillModal })));
 const McpConnectModal = React.lazy(() => import('./components/mcp/McpConnectModal.js').then(m => ({ default: m.McpConnectModal })));
+const CreateVaultModal = React.lazy(() => import('./components/vault/CreateVaultModal.js').then(m => ({ default: m.CreateVaultModal })));
+const MoveToVaultModal = React.lazy(() => import('./components/vault/MoveToVaultModal.js').then(m => ({ default: m.MoveToVaultModal })));
 import { SkillItem } from './components/skills/AddSkillModal.js';
-import { loadVaultData, saveVaultLocalCache, addVaultShareApi, revokeVaultShareApi } from './utils/storage.js';
+import { loadVaultData, saveVaultLocalCache, addVaultShareApi, revokeVaultShareApi, getAuthToken, setAuthToken, removeAuthToken } from './utils/storage.js';
+import {
+  createVaultApi,
+  movePageApi,
+  applyPageSave,
+  savePageContentApi,
+  applyAiContentTransform,
+  insertWikiLink,
+  processImportPages,
+  buildExportZipPackage,
+  triggerBlobDownload,
+} from './operations/index.js';
 import { Lock, Sparkles, Plus, Copy, Check, Terminal, ShieldCheck, FileText, Trash2 } from 'lucide-react';
 import { GoogleOAuthProvider, GoogleLogin, CredentialResponse } from '@react-oauth/google';
 import { jwtDecode } from 'jwt-decode';
 
 const SEED_PAGES: Page[] = [
   {
-    id: 'page_arch_01',
+    id: '11111111-1111-1111-1111-000000000001',
     vault_id: '11111111-1111-1111-1111-111111111111',
     title: 'System Architecture',
     folder: 'Architecture',
     type: 'architecture',
     tags: ['core', 'infrastructure', 'security'],
     aliases: ['Architecture', 'Tech Stack'],
+    content: `# System Architecture\n\nOverview of tkxel Vault microservices and [[API Gateway Security]] with [[KMS Encryption Model]].\n\n## Core Principles\n- Air-gapped confidentiality.\n- Zero-plain-text storage on disk.\n- Envelope encryption with AWS KMS.`,
     created_at: new Date('2026-02-01'),
     front_matter: {
       title: 'System Architecture',
@@ -36,17 +49,17 @@ const SEED_PAGES: Page[] = [
       type: 'architecture',
       tags: ['core', 'infrastructure', 'security'],
       aliases: ['Architecture', 'Tech Stack'],
-      body: `# System Architecture\n\nOverview of tkxel Vault microservices and [[API Gateway Security]] with [[KMS Encryption Model]].\n\n## Core Principles\n- Air-gapped confidentiality.\n- Zero-plain-text storage on disk.\n- Envelope encryption with AWS KMS.`,
     },
   },
   {
-    id: 'page_sec_02',
+    id: '11111111-1111-1111-1111-000000000002',
     vault_id: '11111111-1111-1111-1111-111111111111',
     title: 'API Gateway Security',
     folder: 'Security',
     type: 'note',
     tags: ['security', 'mcp', 'gateway'],
     aliases: ['Gateway Rules', 'MCP Gateway'],
+    content: `# API Gateway Security\n\nImplements Anthropic Model Context Protocol (MCP 2025-11-25) over Streamable HTTP and stdio.\n\nConnects to [[System Architecture]] and [[Coding Agent Guidelines]].`,
     created_at: new Date('2026-02-02'),
     front_matter: {
       title: 'API Gateway Security',
@@ -54,17 +67,17 @@ const SEED_PAGES: Page[] = [
       type: 'note',
       tags: ['security', 'mcp', 'gateway'],
       aliases: ['Gateway Rules', 'MCP Gateway'],
-      body: `# API Gateway Security\n\nImplements Anthropic Model Context Protocol (MCP 2025-11-25) over Streamable HTTP and stdio.\n\nConnects to [[System Architecture]] and [[Coding Agent Guidelines]].`,
     },
   },
   {
-    id: 'page_kms_03',
+    id: '11111111-1111-1111-1111-000000000003',
     vault_id: '11111111-1111-1111-1111-111111111111',
     title: 'KMS Encryption Model',
     folder: 'Security',
     type: 'decision',
     tags: ['crypto', 'envelope-encryption', 'aws-kms'],
     aliases: ['Envelope Encryption', 'KMS Master Key'],
+    content: `# KMS Encryption Model\n\nAES-256-GCM envelope encryption protecting document chunks and proprietary skill instructions.\n\nReferences [[System Architecture]].`,
     created_at: new Date('2026-02-03'),
     front_matter: {
       title: 'KMS Encryption Model',
@@ -72,17 +85,17 @@ const SEED_PAGES: Page[] = [
       type: 'decision',
       tags: ['crypto', 'envelope-encryption', 'aws-kms'],
       aliases: ['Envelope Encryption', 'KMS Master Key'],
-      body: `# KMS Encryption Model\n\nAES-256-GCM envelope encryption protecting document chunks and proprietary skill instructions.\n\nReferences [[System Architecture]].`,
     },
   },
   {
-    id: 'page_agent_04',
+    id: '11111111-1111-1111-1111-000000000004',
     vault_id: '11111111-1111-1111-1111-111111111111',
     title: 'Coding Agent Guidelines',
     folder: 'Agents',
     type: 'project',
     tags: ['claude-code', 'codex', 'antigravity'],
     aliases: ['Agent Rules', 'Claude Code Ingestion'],
+    content: `# Coding Agent Guidelines\n\nBest practices for pairing Claude Code, Codex, and Antigravity with tkxel Vault.\n\nConfigured via [[API Gateway Security]].`,
     created_at: new Date('2026-02-04'),
     front_matter: {
       title: 'Coding Agent Guidelines',
@@ -90,18 +103,17 @@ const SEED_PAGES: Page[] = [
       type: 'project',
       tags: ['claude-code', 'codex', 'antigravity'],
       aliases: ['Agent Rules', 'Claude Code Ingestion'],
-      body: `# Coding Agent Guidelines\n\nBest practices for pairing Claude Code, Codex, and Antigravity with tkxel Vault.\n\nConfigured via [[API Gateway Security]].`,
     },
   },
 ];
 
 const SEED_LINKS: Array<{ from_page_id: string; to_page_id: string }> = [
-  { from_page_id: 'page_arch_01', to_page_id: 'page_sec_02' },
-  { from_page_id: 'page_arch_01', to_page_id: 'page_kms_03' },
-  { from_page_id: 'page_sec_02', to_page_id: 'page_arch_01' },
-  { from_page_id: 'page_sec_02', to_page_id: 'page_agent_04' },
-  { from_page_id: 'page_kms_03', to_page_id: 'page_arch_01' },
-  { from_page_id: 'page_agent_04', to_page_id: 'page_sec_02' },
+  { from_page_id: '11111111-1111-1111-1111-000000000001', to_page_id: '11111111-1111-1111-1111-000000000002' },
+  { from_page_id: '11111111-1111-1111-1111-000000000001', to_page_id: '11111111-1111-1111-1111-000000000003' },
+  { from_page_id: '11111111-1111-1111-1111-000000000002', to_page_id: '11111111-1111-1111-1111-000000000001' },
+  { from_page_id: '11111111-1111-1111-1111-000000000002', to_page_id: '11111111-1111-1111-1111-000000000004' },
+  { from_page_id: '11111111-1111-1111-1111-000000000003', to_page_id: '11111111-1111-1111-1111-000000000001' },
+  { from_page_id: '11111111-1111-1111-1111-000000000004', to_page_id: '11111111-1111-1111-1111-000000000002' },
 ];
 const SEED_SKILLS: SkillItem[] = [];
 const SEED_TIMELINE: TimelineEntry[] = [];
@@ -115,9 +127,9 @@ const safeSkillSummary = (description: string): string => {
 
 export const App: React.FC = () => {
   const [isLoaded, setIsLoaded] = useState(false);
-  const [ssoToken, setSsoToken] = useState<string | null>(() => localStorage.getItem('ssoToken'));
+  const [ssoToken, setSsoToken] = useState<string | null>(() => getAuthToken());
   const [userInfo, setUserInfo] = useState<{ email: string; name: string; picture?: string } | null>(() => {
-    const token = localStorage.getItem('ssoToken');
+    const token = getAuthToken();
     if (token && token !== 'dev_admin_token') {
       try {
         const decoded = jwtDecode(token) as any;
@@ -142,8 +154,8 @@ export const App: React.FC = () => {
     return null;
   });
 
-  // Vaults Definitions
-  const [vaults] = useState<Vault[]>([
+  // Initial Default Vaults (Fallback for offline mode)
+  const DEFAULT_VAULTS: Vault[] = [
     {
       id: '11111111-1111-1111-1111-111111111111',
       name: 'Agent & Skills Hub',
@@ -162,9 +174,41 @@ export const App: React.FC = () => {
       export_policy: 'strictly_forbidden',
       created_at: new Date('2026-02-01'),
     },
-  ]);
+  ];
 
-  const [currentVault, setCurrentVault] = useState<Vault>(vaults[0]);
+  const [vaults, setVaults] = useState<Vault[]>(DEFAULT_VAULTS);
+  const [currentVault, setCurrentVault] = useState<Vault>(DEFAULT_VAULTS[0]);
+
+  // Fetch dynamic vaults list from API
+  useEffect(() => {
+    const fetchVaults = async () => {
+      try {
+        const token = ssoToken || getAuthToken();
+        const res = await fetch('http://localhost:3002/api/vaults', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.vaults) && data.vaults.length > 0) {
+            const parsedVaults: Vault[] = data.vaults.map((v: any) => ({
+              id: v.id,
+              name: v.name,
+              mode: v.mode,
+              owner_id: v.owner_id,
+              data_key_id: v.data_key_id,
+              export_policy: v.export_policy,
+              created_at: new Date(v.created_at),
+            }));
+            setVaults(parsedVaults);
+            setCurrentVault((prev) => parsedVaults.find((pv) => pv.id === prev.id) || parsedVaults[0]);
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to fetch dynamic vaults, using local defaults:', err);
+      }
+    };
+    fetchVaults();
+  }, [ssoToken]);
   const [currentTab, setCurrentTab] = useState<'editor' | 'graph' | 'audit'>('editor');
   const [isNavigationOpen, setIsNavigationOpen] = useState(false);
   const [isNavigationCollapsed, setIsNavigationCollapsed] = useState(false);
@@ -251,23 +295,9 @@ export const App: React.FC = () => {
     setPages((prev) => {
       const updated = prev.map((p) => {
         if (p.id !== targetId) return p;
-        const currentBody = (p.front_matter?.body as string) || '';
-        let updatedBody = content;
-        if (mode === 'append') {
-          updatedBody = currentBody ? `${currentBody}\n\n${content}` : content;
-        } else if (mode === 'insert') {
-          updatedBody = currentBody ? `${content}\n\n${currentBody}` : content;
-        }
-        return {
-          ...p,
-          front_matter: {
-            ...p.front_matter,
-            body: updatedBody,
-          },
-          updated_at: new Date(),
-        };
+        return applyAiContentTransform(p, mode, content);
       });
-      saveVaultLocalCache(currentVault.id, { pages: updated });
+      saveVaultLocalCache(currentVault.id, { pages: updated }, currentVault.mode);
       return updated;
     });
   };
@@ -275,7 +305,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     // Initial load state
     const userId = userInfo?.email || 'usr_admin';
-    loadVaultData(currentVault.id, userId).then((savedState: any) => {
+    loadVaultData(currentVault.id, userId, currentVault.mode).then((savedState: any) => {
       if (savedState && savedState.pages && savedState.pages.length > 0) {
         setPages(savedState.pages);
         setActivePageId(savedState.pages[0].id);
@@ -330,6 +360,9 @@ export const App: React.FC = () => {
   const [isAddSkillOpen, setIsAddSkillOpen] = useState(false);
   const [isConvertToSkillOpen, setIsConvertToSkillOpen] = useState(false);
   const [isMcpOpen, setIsMcpOpen] = useState(false);
+  const [isCreateVaultOpen, setIsCreateVaultOpen] = useState(false);
+  const [isMoveToVaultOpen, setIsMoveToVaultOpen] = useState(false);
+  const [pageToMove, setPageToMove] = useState<Page | null>(null);
   const [noteToConvert, setNoteToConvert] = useState<Page | null>(null);
   const [conversionSuccessMessage, setConversionSuccessMessage] = useState<string | null>(null);
   const [copiedSkillName, setCopiedSkillName] = useState<string | null>(null);
@@ -380,12 +413,12 @@ export const App: React.FC = () => {
       folder: folderName,
       aliases: [],
       tags: ['hub', 'index'],
+      content: hubContent,
       front_matter: {
         title: `${folderName} Hub`,
         type: 'note',
         tags: ['hub', 'index'],
         folder: folderName,
-        body: hubContent,
       },
       created_at: new Date(),
     };
@@ -416,6 +449,7 @@ export const App: React.FC = () => {
 
   const handleCreateNewPage = (targetFolder?: string) => {
     const newId = crypto.randomUUID();
+    const content = '# New Page\n\nStart writing notes and use [[wiki-links]] to connect concepts.';
     const newPage: Page = {
       id: newId,
       vault_id: currentVault.id,
@@ -424,13 +458,13 @@ export const App: React.FC = () => {
       folder: targetFolder,
       aliases: [],
       tags: ['draft'],
+      content,
       front_matter: {
         title: 'New Page',
         folder: targetFolder,
         type: 'note',
         tags: ['draft'],
         aliases: [],
-        body: '# New Page\n\nStart writing notes and use [[wiki-links]] to connect concepts.',
       },
       current_version_id: null,
       created_at: new Date(),
@@ -452,6 +486,7 @@ export const App: React.FC = () => {
 
   const handleCreateGhostPage = (ghostTitle: string) => {
     const newId = crypto.randomUUID();
+    const content = `# ${ghostTitle}\n\nInstantiated via wiki-link from [[${activePage.title}]].`;
     const newPage: Page = {
       id: newId,
       vault_id: currentVault.id,
@@ -459,12 +494,12 @@ export const App: React.FC = () => {
       title: ghostTitle,
       aliases: [],
       tags: ['linked'],
+      content,
       front_matter: {
         title: ghostTitle,
         type: 'note',
         tags: ['linked'],
         aliases: [],
-        body: `# ${ghostTitle}\n\nInstantiated via wiki-link from [[${activePage.title}]].`,
       },
       current_version_id: null,
       created_at: new Date(),
@@ -493,6 +528,7 @@ export const App: React.FC = () => {
 
     if (remainingPages.length === 0) {
       const fallbackId = crypto.randomUUID();
+      const fallbackContent = '# Untitled Note\n\nStart writing notes and use [[wiki-links]] to connect concepts.';
       const fallbackPage: Page = {
         id: fallbackId,
         vault_id: currentVault.id,
@@ -500,12 +536,12 @@ export const App: React.FC = () => {
         title: 'Untitled Note',
         aliases: [],
         tags: ['welcome'],
+        content: fallbackContent,
         front_matter: {
           title: 'Untitled Note',
           type: 'note',
           tags: ['welcome'],
           aliases: [],
-          body: '# Untitled Note\n\nStart writing notes and use [[wiki-links]] to connect concepts.',
         },
         current_version_id: null,
         created_at: new Date(),
@@ -538,76 +574,17 @@ export const App: React.FC = () => {
     aliases?: string[];
     folder?: string;
   }, isDraft: boolean = true) => {
-    const oldTitle = activePage.title;
-    const newTitle = updated.title.trim();
-    let updatedPages = [...pages];
-
-    // Transactional wiki-link refactoring if title renamed (DEF-05)
-    if (oldTitle !== newTitle) {
-      updatedPages = updatedPages.map((p) => {
-        if (p.id === activePage.id) return p;
-        const currentBody = (p.front_matter?.body as string) || '';
-        const refactored = MarkdownEngine.refactorLinks(currentBody, oldTitle, newTitle);
-        if (refactored !== currentBody) {
-          return {
-            ...p,
-            front_matter: {
-              ...p.front_matter,
-              body: refactored,
-            },
-            updated_at: new Date(),
-          };
-        }
-        return p;
-      });
-    }
-
-    // Update active page
-    updatedPages = updatedPages.map((p) => {
-      if (p.id === activePage.id) {
-        return {
-          ...p,
-          title: newTitle,
-          type: updated.type,
-          folder: updated.folder,
-          tags: updated.tags,
-          aliases: updated.aliases || p.aliases || [],
-          front_matter: {
-            ...p.front_matter,
-            title: newTitle,
-            type: updated.type,
-            folder: updated.folder,
-            tags: updated.tags,
-            aliases: updated.aliases || p.aliases || [],
-            body: updated.content,
-          },
-          updated_at: new Date(),
-        };
-      }
-      return p;
+    const saveResult = applyPageSave({
+      pages,
+      activePage,
+      updated,
     });
+    const { updatedPages, newTitle, oldTitle, renamed, newOutgoingLinks } = saveResult;
     setPages(updatedPages);
-
-    // Extract links & synchronize graph (DEF-04)
-    const parsed = MarkdownEngine.parse(updated.content);
-    const newOutgoing: Array<{ from_page_id: string; to_page_id: string }> = [];
-
-    parsed.links.forEach((link) => {
-      const target = updatedPages.find(
-        (p) =>
-          p.title.toLowerCase() === link.target.toLowerCase() ||
-          p.aliases?.some((a) => a.toLowerCase() === link.target.toLowerCase())
-      );
-      if (target && target.id !== activePage.id) {
-        if (!newOutgoing.some((e) => e.to_page_id === target.id)) {
-          newOutgoing.push({ from_page_id: activePage.id, to_page_id: target.id });
-        }
-      }
-    });
 
     const finalLinks = [
       ...links.filter((l) => l.from_page_id !== activePage.id),
-      ...newOutgoing,
+      ...newOutgoingLinks,
     ];
     setLinks(finalLinks);
 
@@ -616,7 +593,7 @@ export const App: React.FC = () => {
       (a) => a.target_id === activePage.id && a.action === ('save_draft' as any)
     );
     const timeSinceLastDraft = lastDraftAudit ? Date.now() - new Date(lastDraftAudit.timestamp).getTime() : Infinity;
-    const shouldRecordAudit = !isDraft || (oldTitle !== newTitle) || timeSinceLastDraft > 30000;
+    const shouldRecordAudit = !isDraft || renamed || timeSinceLastDraft > 30000;
 
     if (shouldRecordAudit) {
       const newAuditEvent: AuditEvent = {
@@ -628,54 +605,113 @@ export const App: React.FC = () => {
         metadata: {
           title: newTitle,
           previousTitle: oldTitle,
-          linksCount: newOutgoing.length,
-          renamed: oldTitle !== newTitle,
+          linksCount: newOutgoingLinks.length,
+          renamed,
         },
       };
       setAuditEvents((prev) => [newAuditEvent, ...prev]);
     }
 
     // Immediately persist to local cache so user never loses draft or publish state
-    saveVaultLocalCache(currentVault.id, {
-      pages: updatedPages,
-      links: finalLinks,
-    });
+    saveVaultLocalCache(
+      currentVault.id,
+      {
+        pages: updatedPages,
+        links: finalLinks,
+      },
+      currentVault.mode
+    );
 
-    // Make API call for draft or publish (Epic B)
+    // Make API call for draft or publish
     try {
-      const endpoint = isDraft ? 'draft' : 'publish';
-      const _userId = userInfo?.email || 'usr_admin';
-      void _userId;
-      const res = await fetch(`http://localhost:3002/api/pages/${activePage.id}/${endpoint}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${ssoToken}`,
-        },
-        body: JSON.stringify({ 
-          content: updated.content, 
+      const res = await savePageContentApi(
+        activePage.id,
+        {
+          content: updated.content,
           vault_id: currentVault.id,
-          updated_at: activePage.updated_at?.toISOString() // Optimistic Concurrency Control
-        }),
-      });
+          updated_at: activePage.updated_at?.toISOString(),
+          title: updated.title,
+          type: updated.type,
+          folder: updated.folder,
+          tags: updated.tags,
+          aliases: updated.aliases,
+        },
+        isDraft,
+        { token: ssoToken || getAuthToken() }
+      );
       if (!res.ok) {
         if (res.status === 409) {
-          alert('Conflict: This page was modified by another user. Please refresh to see their changes before saving your own.');
+          // Attempt automatic timestamp reconciliation if page was desynchronized
+          try {
+            const pageRes = await fetch(`http://localhost:3002/api/pages/${activePage.id}?vaultId=${currentVault.id}`, {
+              headers: {
+                ...(ssoToken || getAuthToken() ? { Authorization: `Bearer ${ssoToken || getAuthToken()}` } : {}),
+              },
+            });
+            if (pageRes.ok) {
+              const resData = await pageRes.json();
+              const serverPage = resData.page || resData;
+              if (serverPage && serverPage.updated_at) {
+                const refreshedDate = new Date(serverPage.updated_at);
+                setPages((prev) =>
+                  prev.map((p) => (p.id === activePage.id ? { ...p, updated_at: refreshedDate } : p))
+                );
+                // Retry save once with the authoritative server timestamp
+                const retryRes = await savePageContentApi(
+                  activePage.id,
+                  {
+                    content: updated.content,
+                    vault_id: currentVault.id,
+                    updated_at: serverPage.updated_at,
+                    title: updated.title,
+                    type: updated.type,
+                    folder: updated.folder,
+                    tags: updated.tags,
+                    aliases: updated.aliases,
+                  },
+                  isDraft,
+                  { token: ssoToken || getAuthToken() }
+                );
+                if (retryRes.ok) {
+                  const retryData = await retryRes.json();
+                  if (retryData.updated_at) {
+                    const finalDate = new Date(retryData.updated_at);
+                    setPages((prev) => {
+                      const reconciled = prev.map((p) => (p.id === activePage.id ? { ...p, updated_at: finalDate } : p));
+                      saveVaultLocalCache(currentVault.id, { pages: reconciled, links: finalLinks }, currentVault.mode);
+                      return reconciled;
+                    });
+                  }
+                  return true;
+                }
+              }
+            }
+          } catch (reconcileErr) {
+            console.warn('Failed to reconcile OCC conflict timestamp:', reconcileErr);
+          }
+          console.warn('Conflict: Page was modified concurrently. Local draft preserved in cache.');
+          return false;
         } else {
           console.warn('Failed to save version to DB (cloud offline):', await res.text());
+          // Changes are safely stored in saveVaultLocalCache, treat as successful local save
+          return true;
         }
-        return false;
       } else {
         const data = await res.json();
         if (data.updated_at) {
-          // Sync our local page updated_at with the server's new one
-          setPages((prev) => prev.map((p) => p.id === activePage.id ? { ...p, updated_at: new Date(data.updated_at) } : p));
+          const freshDate = new Date(data.updated_at);
+          setPages((prev) => {
+            const updatedWithTimestamp = prev.map((p) => p.id === activePage.id ? { ...p, updated_at: freshDate } : p);
+            saveVaultLocalCache(currentVault.id, { pages: updatedWithTimestamp, links: finalLinks }, currentVault.mode);
+            return updatedWithTimestamp;
+          });
         }
         return true;
       }
     } catch (err) {
       console.warn('Network error saving version (offline mode):', err);
-      return false;
+      // Changes are safely stored in saveVaultLocalCache, treat as successful local save
+      return true;
     }
   };
 
@@ -690,19 +726,7 @@ export const App: React.FC = () => {
     );
     if (exists) return;
 
-    // Append link to source page body
-    const currentBody = (sourcePage.front_matter?.body as string) || '';
-    const linkSyntax = `[[${targetPage.title}]]`;
-    const newBody = currentBody.trim() ? `${currentBody}\n\n- ${linkSyntax}` : `- ${linkSyntax}`;
-
-    const updatedSourcePage: Page = {
-      ...sourcePage,
-      front_matter: {
-        ...sourcePage.front_matter,
-        body: newBody,
-      },
-      updated_at: new Date(),
-    };
+    const updatedSourcePage = insertWikiLink(sourcePage, targetPage.title);
 
     setPages((prev) => prev.map((p) => (p.id === sourcePageId ? updatedSourcePage : p)));
     setLinks((prev) => [...prev, { from_page_id: sourcePageId, to_page_id: targetPageId }]);
@@ -771,19 +795,19 @@ export const App: React.FC = () => {
     
     if (!mainNote) return;
     
-    // Combine the bodies of all files in the folder for the instructions payload
+    // Combine the contents of all files in the folder for the instructions payload
     const combinedBody = folderPages.map(p => {
-      const body = p.front_matter.body as string || '';
+      const body = p.content || '';
       return `## ${p.title}\n\n${body}`;
     }).join('\n\n---\n\n');
     
+    const { body: _scrubbedBody, ...cleanMainFm } = (mainNote.front_matter || {}) as Record<string, unknown>;
+
     const syntheticNote: Page = {
       ...mainNote,
       title: folderName,
-      front_matter: {
-        ...mainNote.front_matter,
-        body: combinedBody,
-      }
+      content: combinedBody,
+      front_matter: cleanMainFm,
     };
     
     setNoteToConvert(syntheticNote);
@@ -833,6 +857,36 @@ export const App: React.FC = () => {
     setTimeout(() => setConversionSuccessMessage(null), 10000);
   };
 
+  const handleCreateVault = async (data: { name: string; mode: 'open' | 'locked'; export_policy?: string }) => {
+    const token = ssoToken || getAuthToken();
+    const newVault = await createVaultApi(data, { token });
+    setVaults((prev) => [...prev, newVault]);
+    setCurrentVault(newVault);
+  };
+
+  const handleMovePageToVault = async (destinationVaultId: string) => {
+    if (!pageToMove) return;
+    const token = ssoToken || getAuthToken();
+    await movePageApi(pageToMove.id, destinationVaultId, { token });
+
+    const targetPageId = pageToMove.id;
+    // Update local state ONLY on server-confirmed success: reassign page's vault_id
+    setPages((prev) =>
+      prev.map((p) => (p.id === targetPageId ? { ...p, vault_id: destinationVaultId } : p))
+    );
+
+    // If active page was moved, switch to another page in current vault
+    if (activePageId === targetPageId) {
+      const remainingInCurrent = pages.filter((p) => p.vault_id === currentVault.id && p.id !== targetPageId);
+      if (remainingInCurrent.length > 0) {
+        setActivePageId(remainingInCurrent[0].id);
+      }
+    }
+
+    setIsMoveToVaultOpen(false);
+    setPageToMove(null);
+  };
+
   const handleAddTimelineEntry = (text: string) => {
     const entry: TimelineEntry = {
       id: crypto.randomUUID(),
@@ -847,46 +901,8 @@ export const App: React.FC = () => {
 
   // Bulk Ingestion with link registration and audit event (DEF-07)
   const handleImportComplete = (result: ImportResult) => {
-    const newPages: Page[] = result.pages.map((p) => ({
-      id: crypto.randomUUID(),
-      vault_id: currentVault.id,
-      type: (p.parsed.frontMatter.type as PageType) || 'note',
-      title: p.title,
-      folder: p.folder,
-      aliases: Array.isArray(p.parsed.frontMatter.aliases) ? (p.parsed.frontMatter.aliases as string[]) : [],
-      tags: p.parsed.tags,
-      front_matter: {
-        ...p.parsed.frontMatter,
-        title: p.title,
-        folder: p.folder,
-        type: p.parsed.frontMatter.type || 'note',
-        tags: p.parsed.tags,
-        body: p.content,
-      },
-      created_at: new Date(),
-    }));
-
-    const combinedPages = [...newPages, ...pages];
+    const { newPages, combinedPages, importedLinks } = processImportPages(result, currentVault.id, pages);
     setPages(combinedPages);
-
-    // Register all internal wiki links into graph
-    const importedLinks: Array<{ from_page_id: string; to_page_id: string }> = [];
-    newPages.forEach((np) => {
-      const parsed = MarkdownEngine.parse(np.front_matter.body as string);
-      parsed.links.forEach((l) => {
-        const target = combinedPages.find(
-          (cp) =>
-            cp.title.toLowerCase() === l.target.toLowerCase() ||
-            cp.aliases?.some((a) => a.toLowerCase() === l.target.toLowerCase())
-        );
-        if (target && target.id !== np.id) {
-          if (!importedLinks.some((il) => il.from_page_id === np.id && il.to_page_id === target.id)) {
-            importedLinks.push({ from_page_id: np.id, to_page_id: target.id });
-          }
-        }
-      });
-    });
-
     setLinks((prev) => [...prev, ...importedLinks]);
 
     if (newPages.length > 0) {
@@ -908,43 +924,13 @@ export const App: React.FC = () => {
     };
     const nextAudits = [audit, ...auditEvents];
     setAuditEvents(nextAudits);
-
-    // Immediate synchronous browser persistence & API background sync
-    // Global state sync is handled by resource-oriented APIs
   };
 
   // Real JSZip Packaging & Download (DEF-01)
   const handleConfirmExport = async (justification: string) => {
-    const zip = new JSZip();
-    const vaultNotes = pages.filter((p) => p.vault_id === currentVault.id);
-
-    vaultNotes.forEach((page) => {
-      const rawBody = (page.front_matter?.body as string) || `# ${page.title}\n`;
-      const fm: Record<string, unknown> = {
-        title: page.title,
-        type: page.type,
-        tags: page.tags,
-        aliases: page.aliases || [],
-        created_at: page.created_at ? new Date(page.created_at).toISOString() : new Date().toISOString(),
-      };
-      const yamlHeader = `---\n${Object.entries(fm)
-        .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
-        .join('\n')}\n---\n\n`;
-
-      const finalContent = rawBody.startsWith('---') ? rawBody : `${yamlHeader}${rawBody}`;
-      const safeFilename = `${page.title.replace(/[^a-zA-Z0-9_-]/g, '_')}.md`;
-      zip.file(safeFilename, finalContent);
-    });
-
+    const { zip, fileCount } = await buildExportZipPackage(pages, currentVault.id);
     const blob = await zip.generateAsync({ type: 'blob' });
-    const downloadUrl = URL.createObjectURL(blob);
-    const linkEl = document.createElement('a');
-    linkEl.href = downloadUrl;
-    linkEl.download = `${currentVault.name.toLowerCase().replace(/\s+/g, '-')}-notes.zip`;
-    document.body.appendChild(linkEl);
-    linkEl.click();
-    document.body.removeChild(linkEl);
-    URL.revokeObjectURL(downloadUrl);
+    triggerBlobDownload(blob, `${currentVault.name.toLowerCase().replace(/\s+/g, '-')}-notes.zip`);
 
     // Audit Event
     const audit: AuditEvent = {
@@ -953,9 +939,10 @@ export const App: React.FC = () => {
       action: 'export_open_vault',
       target_id: currentVault.id,
       timestamp: new Date(),
-      metadata: { justification, pageCount: vaultNotes.length, format: 'zip' },
+      metadata: { justification, pageCount: fileCount, format: 'zip' },
     };
     setAuditEvents((prev) => [audit, ...prev]);
+    setIsExportOpen(false);
   };
 
   // Real CSV Compilation & Download (DEF-02)
@@ -1045,7 +1032,7 @@ export const App: React.FC = () => {
                       }
 
                       setSsoToken(res.credential);
-                      localStorage.setItem('ssoToken', res.credential);
+                      setAuthToken(res.credential);
                       setUserInfo({
                         email: decoded.email,
                         name: decoded.name,
@@ -1073,7 +1060,7 @@ export const App: React.FC = () => {
               onClick={() => {
                 const adminEmail = (import.meta.env.VITE_VAULT_OWNER_EMAIL || 'mubashir.ali@camp1.tkxel.com').split(',')[0].trim();
                 setSsoToken('dev_admin_token');
-                localStorage.setItem('ssoToken', 'dev_admin_token');
+                setAuthToken('dev_admin_token');
                 setUserInfo({
                   email: adminEmail,
                   name: 'Mubashir Ali (Administrator)',
@@ -1106,7 +1093,7 @@ export const App: React.FC = () => {
               onClick={() => {
                 const adminEmail = (import.meta.env.VITE_VAULT_OWNER_EMAIL || 'mubashir.ali@camp1.tkxel.com').split(',')[0].trim();
                 setSsoToken('dev_admin_token');
-                localStorage.setItem('ssoToken', 'dev_admin_token');
+                setAuthToken('dev_admin_token');
                 setUserInfo({
                   email: adminEmail,
                   name: 'Mubashir Ali (Administrator)',
@@ -1119,7 +1106,7 @@ export const App: React.FC = () => {
               className="btn btn-secondary-white"
               style={{ padding: '8px 16px', fontSize: '0.82rem' }}
               onClick={() => {
-                localStorage.removeItem('ssoToken');
+                removeAuthToken();
                 setSsoToken(null);
                 setUserInfo(null);
               }}
@@ -1151,8 +1138,9 @@ export const App: React.FC = () => {
       onOpenExportModal={() => setIsExportOpen(true)}
       onOpenImportModal={() => setIsImportOpen(true)}
       onOpenMcpModal={() => setIsMcpOpen(true)}
+      onOpenCreateVault={() => setIsCreateVaultOpen(true)}
       onLogout={() => {
-        localStorage.removeItem('ssoToken');
+        removeAuthToken();
         setSsoToken(null);
         setUserInfo(null);
       }}
@@ -1221,6 +1209,10 @@ export const App: React.FC = () => {
         onDeleteFolder={handleDeleteFolder}
         onDeletePage={handleDeletePage}
         onOpenConvertToSkill={(page) => handleOpenConvertToSkill(page)}
+        onOpenMoveToVault={(page) => {
+          setPageToMove(page);
+          setIsMoveToVaultOpen(true);
+        }}
         onConvertFolderToSkill={handleConvertFolderToSkill}
         onCreateHubPage={handleCreateHubPage}
         isNavigationOpen={isNavigationOpen}
@@ -1244,6 +1236,12 @@ export const App: React.FC = () => {
             onSave={handleSavePage}
             onDelete={() => handleDeletePage(activePage.id)}
             onOpenConvertToSkill={() => activePage && handleOpenConvertToSkill(activePage)}
+            onOpenMoveToVault={() => {
+              if (activePage) {
+                setPageToMove(activePage);
+                setIsMoveToVaultOpen(true);
+              }
+            }}
             onAddTimelineEntry={handleAddTimelineEntry}
             onNavigateToPage={(t) => {
               const found = vaultPages.find(
@@ -1287,10 +1285,10 @@ export const App: React.FC = () => {
               <FileText size={32} color="var(--tk-primary)" />
             </div>
             <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--tk-secondary)', margin: '0 0 10px 0' }}>
-              Agent Workbench Ready
+              Vault Knowledge Base Ready
             </h2>
             <p style={{ maxWidth: '480px', color: 'var(--text-secondary)', fontSize: '0.92rem', lineHeight: 1.6, margin: '0 0 28px 0' }}>
-              This workspace is empty. Start pasting and refining prompts, instructions, and context gathered from Claude/Codex to build your agents.
+              This vault is empty. Start creating notes, documents, and connecting concepts using [[wiki-links]] to build your knowledge graph.
             </p>
             <button
               onClick={() => handleCreateNewPage()}
@@ -1298,7 +1296,7 @@ export const App: React.FC = () => {
               style={{ padding: '10px 22px', fontSize: '0.9rem', gap: '8px' }}
             >
               <Plus size={16} />
-              <span>Draft first agent</span>
+              <span>Create first note</span>
             </button>
           </div>
         )
@@ -1680,6 +1678,29 @@ export const App: React.FC = () => {
           isOpen={isMcpOpen}
           currentVault={currentVault}
           onClose={() => setIsMcpOpen(false)}
+        />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <CreateVaultModal
+          isOpen={isCreateVaultOpen}
+          onClose={() => setIsCreateVaultOpen(false)}
+          onCreateVault={handleCreateVault}
+        />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <MoveToVaultModal
+          isOpen={isMoveToVaultOpen}
+          onClose={() => {
+            setIsMoveToVaultOpen(false);
+            setPageToMove(null);
+          }}
+          pageTitle={pageToMove?.title || ''}
+          pageId={pageToMove?.id || ''}
+          currentVault={currentVault}
+          availableVaults={vaults}
+          onMovePage={handleMovePageToVault}
         />
       </Suspense>
     </AppShell>

@@ -35,3 +35,11 @@ redisdata/
 .DS_Store
 Thumbs.db
 my_agents_and_skills.zip
+
+# Project specific files
+backup_restore_runbook.md
+DESIGN.md
+dr_backup.sh
+dr_restore.sh
+srs_compliance_report.md
+SENIOR_REVIEW_REMEDIATION_PLAN.md

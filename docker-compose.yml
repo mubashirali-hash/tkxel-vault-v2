@@ -32,6 +32,18 @@ services:
       timeout: 3s
       retries: 5
 
+  migration:
+    build:
+      context: .
+    container_name: tkxel-vault-migration
+    restart: "no"
+    command: ["pnpm", "run", "--filter", "@tkxel-vault/vault-core", "migrate"]
+    environment:
+      - DATABASE_URL=postgres://postgres:postgrespassword@postgres:5432/tkxel_vault
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   api-server:
     build:
       context: .
@@ -39,16 +51,61 @@ services:
     restart: unless-stopped
     command: ["pnpm", "run", "--filter", "@tkxel-vault/api-server", "start"]
     environment:
+      - NODE_ENV=${NODE_ENV:-production}
       - DATABASE_URL=postgres://postgres:postgrespassword@postgres:5432/tkxel_vault
       - REDIS_URL=redis://redis:6379
+      - SKILL_RUNNER_URL=http://skill-runner:3003
+      - RUNNER_SHARED_SECRET=${RUNNER_SHARED_SECRET:?RUNNER_SHARED_SECRET is required}
     ports:
       - "3002:3002"
-      - "3003:3003"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+
+  skill-runner:
+    build:
+      context: .
+    container_name: tkxel-vault-skill-runner
+    restart: unless-stopped
+    command: ["node", "services/skill-runner/dist/server.js"]
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+          pids: 100
+    environment:
+      - HOME=/tmp
+      - NODE_ENV=${NODE_ENV:-production}
+      - DATABASE_URL=postgres://postgres:postgrespassword@postgres:5432/tkxel_vault
+      - REDIS_URL=redis://redis:6379
+      - PORT=3003
+      - RUNNER_SHARED_SECRET=${RUNNER_SHARED_SECRET:?RUNNER_SHARED_SECRET is required}
+      - SANDBOX_RUNTIME=runsc
+      - ALLOW_DEV_MOCK_KMS=${ALLOW_DEV_MOCK_KMS:-false}
+      - ALLOW_DEV_MOCK_LLM=${ALLOW_DEV_MOCK_LLM:-false}
+      - ALLOW_DEV_HOST_SANDBOX=${ALLOW_DEV_HOST_SANDBOX:-false}
+    expose:
+      - "3003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
 
   mcp-gateway:
     build:
@@ -57,13 +114,20 @@ services:
     restart: unless-stopped
     command: ["pnpm", "run", "--filter", "@tkxel-vault/mcp-gateway", "start"]
     environment:
+      - NODE_ENV=${NODE_ENV:-production}
       - DATABASE_URL=postgres://postgres:postgrespassword@postgres:5432/tkxel_vault
       - REDIS_URL=redis://redis:6379
+      - SKILL_RUNNER_URL=http://skill-runner:3003
+      - RUNNER_SHARED_SECRET=${RUNNER_SHARED_SECRET:?RUNNER_SHARED_SECRET is required}
     ports:
       - "3001:3001"
     depends_on:
       redis:
         condition: service_healthy
+      skill-runner:
+        condition: service_started
+      migration:
+        condition: service_completed_successfully
 
   web-app:
     build:

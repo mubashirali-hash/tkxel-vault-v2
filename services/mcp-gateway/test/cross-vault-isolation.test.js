@@ -14,6 +14,11 @@ describe('Epic 6.2: Multi-Tenant Cross-Vault Leakage & Error Suppression Tests',
   const userAlphaPermissions = [
     { vaultId: vaultAlpha.id, mode: 'open', role: 'reader' },
   ];
+  const userAlphaContext = {
+    userId: 'alpha-reader@example.com',
+    roles: new Map([[vaultAlpha.id, 'reader']]),
+    vaultModes: new Map([[vaultAlpha.id, 'open']]),
+  };
 
   it('Strict Multi-Tenant Isolation: User restricted to Vault Alpha cannot access Vault Beta pages or search', async () => {
     // 1. Authorized tools check
@@ -46,7 +51,10 @@ describe('Epic 6.2: Multi-Tenant Cross-Vault Leakage & Error Suppression Tests',
     const handlers = createOpenRetrievalHandlers(mockStorage);
 
     // Call search for Vault Alpha: returns results
-    const alphaRes = await handlers.handleSearch({ query: 'policy', vault_id: vaultAlpha.id });
+    const alphaRes = await handlers.handleSearch(
+      { query: 'policy', vault_id: vaultAlpha.id },
+      userAlphaContext,
+    );
     const alphaData = JSON.parse(alphaRes.content[0].text);
     assert.equal(alphaData.length, 1);
     assert.equal(alphaData[0].vaultId, vaultAlpha.id);
@@ -54,7 +62,10 @@ describe('Epic 6.2: Multi-Tenant Cross-Vault Leakage & Error Suppression Tests',
     // Call search targeting unauthorized Vault Beta: strictly rejected
     await assert.rejects(
       async () => {
-        await handlers.handleSearch({ query: 'M&A acquisition', vault_id: vaultBeta.id });
+        await handlers.handleSearch(
+          { query: 'M&A acquisition', vault_id: vaultBeta.id },
+          userAlphaContext,
+        );
       },
       (err) => {
         assert.ok(err.message.includes('not_allowed') || err.message.includes('not_found'));
@@ -82,7 +93,10 @@ describe('Epic 6.2: Multi-Tenant Cross-Vault Leakage & Error Suppression Tests',
     // 1. Existing secret page in unauthorized vault
     let errorExisting = '';
     try {
-      await handlers.handleGetPage({ title: 'secret_mna_page_999', vault_id: vaultBeta.id });
+      await handlers.handleGetPage(
+        { title: 'secret_mna_page_999', vault_id: vaultBeta.id },
+        userAlphaContext,
+      );
     } catch (e) {
       errorExisting = e.message;
     }
@@ -90,7 +104,10 @@ describe('Epic 6.2: Multi-Tenant Cross-Vault Leakage & Error Suppression Tests',
     // 2. Completely fake non-existent page
     let errorFake = '';
     try {
-      await handlers.handleGetPage({ title: 'non_existent_random_id_000', vault_id: vaultBeta.id });
+      await handlers.handleGetPage(
+        { title: 'non_existent_random_id_000', vault_id: vaultBeta.id },
+        userAlphaContext,
+      );
     } catch (e) {
       errorFake = e.message;
     }

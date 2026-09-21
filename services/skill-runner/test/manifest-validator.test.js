@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  ENCRYPTED_SKILL_PACKAGE_FORMAT,
   SkillManifestValidator,
   ValidationError,
 } from '../dist/manifest/validator.js';
@@ -116,5 +117,61 @@ test('Skill Manifest Validator: validates tool.json parameters and detects type 
       });
     },
     (err) => err instanceof ValidationError && err.message.includes("Unexpected argument 'unexpected_flag'")
+  );
+});
+
+test('Skill Manifest Validator: parses a versioned encrypted package with a safe helper entrypoint', () => {
+  const validator = new SkillManifestValidator();
+  const payload = JSON.stringify({
+    format: ENCRYPTED_SKILL_PACKAGE_FORMAT,
+    skillMd: `---\nname: secure-calculator\ndescription: Calculates a protected result.\n---\nReturn only a synthesized result.`,
+    toolJson: {
+      name: 'secure-calculator',
+      description: 'Calculates a protected result.',
+      inputSchema: {
+        type: 'object',
+        properties: { value: { type: 'number' } },
+        required: ['value'],
+        additionalProperties: false,
+      },
+      execution: {
+        kind: 'helper',
+        runtime: 'node',
+        entrypoint: 'scripts/calculate.js',
+      },
+    },
+    files: {
+      'scripts/calculate.js': 'console.log(42);',
+    },
+  });
+
+  const parsed = validator.parseEncryptedPayload(payload);
+  assert.equal(parsed.packaged, true);
+  assert.equal(parsed.manifest.name, 'secure-calculator');
+  assert.equal(parsed.helper.runtime, 'node');
+  assert.equal(parsed.helper.source, 'console.log(42);');
+});
+
+test('Skill Manifest Validator: rejects traversal and missing helper source', () => {
+  const validator = new SkillManifestValidator();
+  const makePayload = (entrypoint, files = {}) => JSON.stringify({
+    format: ENCRYPTED_SKILL_PACKAGE_FORMAT,
+    skillMd: `---\nname: unsafe\ndescription: Unsafe helper fixture.\n---\nDo work.`,
+    toolJson: {
+      name: 'unsafe',
+      description: 'Unsafe helper fixture.',
+      inputSchema: { type: 'object', properties: {} },
+      execution: { kind: 'helper', runtime: 'node', entrypoint },
+    },
+    files,
+  });
+
+  assert.throws(
+    () => validator.parseEncryptedPayload(makePayload('../escape.js', { '../escape.js': 'console.log(1)' })),
+    ValidationError
+  );
+  assert.throws(
+    () => validator.parseEncryptedPayload(makePayload('scripts/missing.js')),
+    (err) => err instanceof ValidationError && err.message.includes('entrypoint is missing')
   );
 });

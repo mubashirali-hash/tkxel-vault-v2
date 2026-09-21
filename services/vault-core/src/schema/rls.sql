@@ -1,14 +1,34 @@
 -- tkxel Vault Defense-in-Depth Row-Level Security (RLS) Policies
 -- Enforces per-vault multi-tenant data boundaries at the database layer
 
--- Enable RLS across all vault data tables
+-- Enable and FORCE RLS across all vault data tables (FORCE applies RLS to table owners)
 ALTER TABLE vaults ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vaults FORCE ROW LEVEL SECURITY;
 ALTER TABLE pages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pages FORCE ROW LEVEL SECURITY;
 ALTER TABLE versions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE versions FORCE ROW LEVEL SECURITY;
 ALTER TABLE chunks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE chunks FORCE ROW LEVEL SECURITY;
 ALTER TABLE links ENABLE ROW LEVEL SECURITY;
+ALTER TABLE links FORCE ROW LEVEL SECURITY;
 ALTER TABLE skills ENABLE ROW LEVEL SECURITY;
+ALTER TABLE skills FORCE ROW LEVEL SECURITY;
 ALTER TABLE shares ENABLE ROW LEVEL SECURITY;
+ALTER TABLE shares FORCE ROW LEVEL SECURITY;
+
+-- Ensure non-superuser application role exists (superusers bypass RLS in Postgres)
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vault_app') THEN
+        CREATE ROLE vault_app LOGIN PASSWORD 'vaultpassword';
+    END IF;
+END $$;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO vault_app;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO vault_app;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO vault_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO vault_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO vault_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO vault_app;
 
 -- Helper function to check if current user has access to a vault
 CREATE OR REPLACE FUNCTION has_vault_access(v_id UUID, required_role TEXT DEFAULT 'reader')
@@ -56,13 +76,47 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Drop old policies if they exist (to be safe if running multiple times)
+-- Drop existing policies if they exist for idempotency
+DROP POLICY IF EXISTS vaults_select ON vaults;
+DROP POLICY IF EXISTS vaults_insert ON vaults;
+DROP POLICY IF EXISTS vaults_update ON vaults;
+DROP POLICY IF EXISTS vaults_delete ON vaults;
 DROP POLICY IF EXISTS vaults_access_policy ON vaults;
+
+DROP POLICY IF EXISTS pages_select ON pages;
+DROP POLICY IF EXISTS pages_insert ON pages;
+DROP POLICY IF EXISTS pages_update ON pages;
+DROP POLICY IF EXISTS pages_delete ON pages;
 DROP POLICY IF EXISTS pages_access_policy ON pages;
+
+DROP POLICY IF EXISTS versions_select ON versions;
+DROP POLICY IF EXISTS versions_insert ON versions;
+DROP POLICY IF EXISTS versions_update ON versions;
+DROP POLICY IF EXISTS versions_delete ON versions;
 DROP POLICY IF EXISTS versions_access_policy ON versions;
+
+DROP POLICY IF EXISTS chunks_select ON chunks;
+DROP POLICY IF EXISTS chunks_insert ON chunks;
+DROP POLICY IF EXISTS chunks_update ON chunks;
+DROP POLICY IF EXISTS chunks_delete ON chunks;
 DROP POLICY IF EXISTS chunks_access_policy ON chunks;
+
+DROP POLICY IF EXISTS skills_select ON skills;
+DROP POLICY IF EXISTS skills_insert ON skills;
+DROP POLICY IF EXISTS skills_update ON skills;
+DROP POLICY IF EXISTS skills_delete ON skills;
 DROP POLICY IF EXISTS skills_access_policy ON skills;
+
+DROP POLICY IF EXISTS links_select ON links;
+DROP POLICY IF EXISTS links_insert ON links;
+DROP POLICY IF EXISTS links_update ON links;
+DROP POLICY IF EXISTS links_delete ON links;
 DROP POLICY IF EXISTS links_access_policy ON links;
+
+DROP POLICY IF EXISTS shares_select ON shares;
+DROP POLICY IF EXISTS shares_insert ON shares;
+DROP POLICY IF EXISTS shares_update ON shares;
+DROP POLICY IF EXISTS shares_delete ON shares;
 DROP POLICY IF EXISTS shares_access_policy ON shares;
 
 -- Vaults

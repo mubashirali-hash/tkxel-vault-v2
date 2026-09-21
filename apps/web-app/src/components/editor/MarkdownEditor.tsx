@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Save,
   ArrowUpRight,
+  ArrowRight,
   Bold,
   Italic,
   Code,
@@ -48,6 +49,7 @@ export interface MarkdownEditorProps {
   onSave: (updated: { title: string; content: string; tags: string[]; type: PageType; aliases?: string[]; folder?: string }, isDraft?: boolean) => Promise<boolean | void> | void;
   onDelete?: () => void;
   onOpenConvertToSkill?: () => void;
+  onOpenMoveToVault?: () => void;
   onAddTimelineEntry: (text: string) => void;
   onNavigateToPage: (title: string) => void;
   onCreateGhostPage?: (title: string) => void;
@@ -69,6 +71,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   onSave,
   onDelete,
   onOpenConvertToSkill,
+  onOpenMoveToVault,
   onAddTimelineEntry,
   onNavigateToPage,
   onCreateGhostPage,
@@ -79,7 +82,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   const [title, setTitle] = useState(page.title);
   const [folder, setFolder] = useState<string | undefined>(page.folder);
   const initialBody =
-    (page.front_matter?.body as string) ||
+    page.content ||
     `# ${page.title}\n\nStart writing notes. Use [[wiki-links]] to connect concepts across the vault.\n\n## Overview\nDocument key decisions and system notes.`;
 
   const [content, setContent] = useState(initialBody);
@@ -116,6 +119,8 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isDirtyRef = useRef(false);
   const activePageIdRef = useRef(page.id);
+  const isSavingRef = useRef(false);
+  const pendingSaveRef = useRef<{ isDraft: boolean; isAuto: boolean } | null>(null);
 
   isDirtyRef.current = isDirty;
   activePageIdRef.current = page.id;
@@ -393,38 +398,48 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
 
   // Sync state if active page changes
   useEffect(() => {
-    if (autoSaveTimerRef.current) {
-      clearTimeout(autoSaveTimerRef.current);
-      autoSaveTimerRef.current = null;
-    }
-
     const isDifferentNote = prevPageIdRef.current !== page.id;
-    prevPageIdRef.current = page.id;
+    if (isDifferentNote) {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+      prevPageIdRef.current = page.id;
 
-    setTitle(page.title);
-    setFolder(page.folder);
-    const newBody =
-      (page.front_matter?.body as string) ||
-      `# ${page.title}\n\nStart writing notes. Use [[wiki-links]] to connect concepts across the vault.`;
-    setContent(newBody);
-    setTags(page.tags);
-    setAliases(page.aliases || []);
-    setPageType(page.type);
-    setIsDirty(false);
-    isDirtyRef.current = false;
-    setIsAutoSaving(false);
-    setLastSavedAt(null);
+      setTitle(page.title);
+      setFolder(page.folder);
+      const newBody =
+        page.content ||
+        `# ${page.title}\n\nStart writing notes. Use [[wiki-links]] to connect concepts across the vault.`;
+      setContent(newBody);
+      setTags(page.tags);
+      setAliases(page.aliases || []);
+      setPageType(page.type);
+      setIsDirty(false);
+      isDirtyRef.current = false;
+      setIsAutoSaving(false);
+      setLastSavedAt(null);
+      setSyncError(false);
 
-    // Only update editor content if switching to a different note (prevents cursor jump during autosave)
-    if (isDifferentNote && editor && !editor.isDestroyed) {
-      editor.commands.setContent(newBody);
+      // Only update editor content if switching to a different note (prevents cursor jump during autosave)
+      if (editor && !editor.isDestroyed) {
+        queueMicrotask(() => {
+          if (editor && !editor.isDestroyed) {
+            editor.commands.setContent(newBody);
+          }
+        });
+      }
     }
-  }, [page.id, page.folder, editor]);
+  }, [page.id, editor]);
 
   // Sync canEdit with editor
   useEffect(() => {
     if (editor && !editor.isDestroyed) {
-      editor.setEditable(canEdit);
+      queueMicrotask(() => {
+        if (editor && !editor.isDestroyed) {
+          editor.setEditable(canEdit);
+        }
+      });
     }
   }, [canEdit, editor]);
 
@@ -479,6 +494,11 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
 
   const handleSaveDocument = async (isDraft: boolean = true, isAuto: boolean = false) => {
     if (!canEdit) return;
+    if (isSavingRef.current) {
+      pendingSaveRef.current = { isDraft, isAuto };
+      return;
+    }
+    isSavingRef.current = true;
     const currentMd = editor && !editor.isDestroyed ? (editor.storage as any).markdown.getMarkdown() : latestDocRef.current.content;
     const dataToSave = {
       ...latestDocRef.current,
@@ -487,24 +507,40 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     if (isAuto) {
       setIsAutoSaving(true);
     }
+    let saveSuccess = false;
     try {
       const result = await onSave(dataToSave, isDraft);
       if (result === false) {
         setSyncError(true);
+        saveSuccess = false;
       } else {
         setSyncError(false);
         setLastSavedAt(new Date());
+        saveSuccess = true;
       }
     } catch {
       setSyncError(true);
+      saveSuccess = false;
     } finally {
-      setIsDirty(false);
-      isDirtyRef.current = false;
-      setSavedFeedback(true);
-      setTimeout(() => {
-        setSavedFeedback(false);
-        if (isAuto) setIsAutoSaving(false);
-      }, 1500);
+      isSavingRef.current = false;
+      if (isAuto) {
+        setIsAutoSaving(false);
+      }
+      if (saveSuccess) {
+        setIsDirty(false);
+        isDirtyRef.current = false;
+        setSavedFeedback(true);
+        setTimeout(() => {
+          setSavedFeedback(false);
+        }, 1500);
+      }
+      if (pendingSaveRef.current) {
+        const pending = pendingSaveRef.current;
+        pendingSaveRef.current = null;
+        queueMicrotask(() => {
+          handleSaveDocument(pending.isDraft, pending.isAuto);
+        });
+      }
     }
   };
 
@@ -597,8 +633,24 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
           <div className="markdown-editor__actions">
             <span
               className="markdown-editor__save-state"
-              data-state={!isOnline || syncError ? 'offline' : isAutoSaving ? 'saving' : savedFeedback || !isDirty ? 'saved' : 'draft'}
-              title={syncError ? 'Cloud sync failed (database offline) — saved in local browser storage' : lastSavedAt ? `Last autosaved at ${lastSavedAt.toLocaleTimeString()}` : undefined}
+              data-state={
+                syncError
+                  ? 'error'
+                  : !isOnline
+                  ? 'offline'
+                  : isAutoSaving
+                  ? 'saving'
+                  : savedFeedback || !isDirty
+                  ? 'saved'
+                  : 'draft'
+              }
+              title={
+                syncError
+                  ? 'Save failed — server error or offline'
+                  : lastSavedAt
+                  ? `Last autosaved at ${lastSavedAt.toLocaleTimeString()}`
+                  : undefined
+              }
             >
               {isAutoSaving ? (
                 <>
@@ -606,7 +658,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
                 </>
               ) : syncError ? (
                 <>
-                  <AlertTriangle size={14} /> Saved locally (DB offline)
+                  <AlertTriangle size={14} /> Save failed
                 </>
               ) : (
                 <>
@@ -733,6 +785,12 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
                       label: 'Create protected skill',
                       icon: <Sparkles size={15} />,
                       onSelect: onOpenConvertToSkill,
+                    }] : []),
+                    ...(onOpenMoveToVault ? [{
+                      id: 'move-to-vault',
+                      label: 'Move to another vault...',
+                      icon: <ArrowRight size={15} />,
+                      onSelect: onOpenMoveToVault,
                     }] : []),
                     ...(onDelete ? [{
                       id: 'delete',
@@ -1055,7 +1113,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
               tags: p.tags,
               aliases: p.aliases,
               type: p.type,
-              content: (p.front_matter?.body as string) || '',
+              content: p.content || '',
             }))}
             folders={folders}
             onInsertLink={handleInsertAiLink}

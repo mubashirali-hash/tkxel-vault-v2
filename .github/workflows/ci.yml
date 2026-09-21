@@ -8,7 +8,7 @@ on:
 
 jobs:
   test:
-    name: Build & Test Suite (145 Tests)
+    name: Build, Test & Release-Claim Guard
     runs-on: ubuntu-latest
 
     services:
@@ -73,10 +73,21 @@ jobs:
         run: pnpm turbo run typecheck
 
       - name: Build Packages & Apps
-        run: pnpm turbo run build
+        run: pnpm turbo run build --force
 
-      - name: Run Full Test Suite (145 Tests)
+      - name: Apply Real Database Migrations
+        env:
+          DATABASE_URL: postgres://postgres:postgrespassword@localhost:5432/tkxel_vault
+        run: pnpm db:migrate
+
+      - name: Verify Release Claims Have Acceptance Evidence
+        run: pnpm verify:release-claims
+
+      - name: Test Release-Claim Guard
+        run: node --test scripts/verify-release-claims.test.mjs
+
+      - name: Run Full Test Suite
         env:
           DATABASE_URL: postgres://postgres:postgrespassword@localhost:5432/tkxel_vault
           REDIS_URL: redis://localhost:6379
-        run: pnpm turbo run test
+        run: pnpm turbo run test --force

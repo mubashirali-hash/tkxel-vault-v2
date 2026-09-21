@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   BookOpen, Bot, Check, ChevronDown, Download, FileText, History, Lock, LogOut, Menu,
-  Network, PanelLeftClose, PanelLeftOpen, Share2, Upload, UserRound, Sparkles,
+  Network, PanelLeftClose, PanelLeftOpen, Share2, Upload, UserRound, Sparkles, Plus,
 } from 'lucide-react';
 import { Vault, VaultRole } from '@tkxel-vault/types';
 import { ActionMenu, Badge, Button, IconButton } from '../ui/index.js';
@@ -26,6 +26,7 @@ export interface AppShellProps {
   onOpenExportModal: () => void;
   onOpenImportModal: () => void;
   onOpenMcpModal?: () => void;
+  onOpenCreateVault?: () => void;
   onLogout?: () => void;
   children: React.ReactNode;
 }
@@ -34,7 +35,7 @@ export const AppShell: React.FC<AppShellProps> = ({
   currentVault, vaults, currentRole, currentTab, userInfo,
   navigationOpen, navigationCollapsed, navigationAvailable, onToggleNavigation, onCloseNavigation,
   onSelectVault, onSelectTab, onOpenShareModal, onOpenExportModal,
-  onOpenImportModal, onOpenMcpModal, onLogout, children,
+  onOpenImportModal, onOpenMcpModal, onOpenCreateVault, onLogout, children,
 }) => {
   const [vaultDropdownOpen, setVaultDropdownOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -156,6 +157,24 @@ export const AppShell: React.FC<AppShellProps> = ({
                     </button>
                   );
                 })}
+
+                {onOpenCreateVault && (
+                  <>
+                    <div style={{ height: '1px', backgroundColor: 'var(--border-subtle, #E2E8F0)', margin: '4px 0' }} />
+                    <button
+                      type="button"
+                      className="app-popover__item"
+                      style={{ color: 'var(--tk-primary, #0755E9)', fontWeight: 600 }}
+                      onClick={() => {
+                        setVaultDropdownOpen(false);
+                        onOpenCreateVault();
+                      }}
+                    >
+                      <Plus size={16} />
+                      <span>Create New Vault...</span>
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>

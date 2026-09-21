@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@tkxel-vault/skill-runner": "workspace:*",
     "@tkxel-vault/types": "workspace:*",
     "@tkxel-vault/vault-core": "workspace:*",
     "@types/pg": "^8.23.1",

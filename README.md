@@ -3,12 +3,12 @@
 **Enterprise Context Hub & Zero-Read Locked Skills Store**
 
 [![Version](https://img.shields.io/badge/version-1.0-blue.svg)](./tkxel_vault_SRS.md)
-[![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen.svg)](./PROJECT_MEMORY.md)
+[![Status](https://img.shields.io/badge/status-Remediation%20Required-critical.svg)](./CODEX_MEMORY.md)
 [![License](https://img.shields.io/badge/license-Proprietary-red.svg)](#)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25%20Streamable%20HTTP-success.svg)](https://modelcontextprotocol.io)
-[![Tests](https://img.shields.io/badge/tests-141%20passing-brightgreen.svg)](#testing--quality-assurance)
-[![ADRs](https://img.shields.io/badge/ADRs-16%20documented-blueviolet.svg)](./docs/adr/)
-[![Milestones](https://img.shields.io/badge/milestones-18%20completed-orange.svg)](./PROJECT_MEMORY.md)
+[![Tests](https://img.shields.io/badge/tests-12%2F12%20tasks%20passing-blue.svg)](#testing--quality-assurance)
+[![ADRs](https://img.shields.io/badge/ADRs-19%20documented-blueviolet.svg)](./docs/adr/)
+[![Remediation](https://img.shields.io/badge/remediation-Epics%200--8-orange.svg)](./SENIOR_REVIEW_REMEDIATION_PLAN.md)
 
 ---
 
@@ -78,12 +78,12 @@ pnpm docker:up          # Starts PostgreSQL 16 + pgvector and Redis 7
 
 ### 3. Run Development Servers
 ```bash
-pnpm dev                # Starts Web App, API Server & Skill Runner via Turborepo
+pnpm dev                # Starts all development services, including the independent Skill Runner
 ```
 
 ### 4. Run Tests
 ```bash
-pnpm test               # 141 tests passing across 5 monorepo packages (0 failures)
+pnpm test               # Runs the current package suites; release evidence must use an uncached run
 ```
 
 ---
@@ -323,6 +323,9 @@ What staff CANNOT do:
 
 ---
 
+> [!WARNING]
+> **Current release status (2026-09-16): remediation required; not production-approved.** A production-path audit reopened multi-tenant isolation, zero-read storage, runner separation, hybrid retrieval, and acceptance-test gates. See [CODEX_MEMORY.md](./CODEX_MEMORY.md) and [SENIOR_REVIEW_REMEDIATION_PLAN.md](./SENIOR_REVIEW_REMEDIATION_PLAN.md). Descriptions below include target architecture and historical implementation; they are not current compliance certification.
+
 ## 6. The Four System Layers
 
 ### Layer 1: Frontend — The Admin Web App (`apps/web-app`)
@@ -336,8 +339,8 @@ React + Vite application designed for **Owners and Editors** to author, manage, 
 - **MCP Connect Modal** — 1-click Claude Desktop / Cursor config generation with live health probe
 
 ### Layer 2: Backend — Storage, Search & Intelligence
-- **Vault Core (`services/vault-core`)**: AES-256-GCM envelope encryption, Markdown parser preserving YAML front matter, bidirectional link graph indexer, hybrid search engine (BM25 + pgvector via RRF), append-only audit logging, and export engine.
-- **API Server (`apps/api-server`)**: Express REST API on port 3002, AI Assistant module, dual-layer browser + database persistence, and dedicated Skill Runner listener on port 3003.
+- **Vault Core (`services/vault-core`)**: AES-256-GCM envelope primitives, Markdown parsing, bidirectional link graph utilities, chunking/vector/RRF scaffolding, audit logging, and export policy. Genuine BM25/semantic production retrieval and ciphertext-only indexes remain remediation work.
+- **API Server (`apps/api-server`)**: Express REST API on port 3002 and, currently, a second listener on port 3003. The port-3003 listener must move into an independent Skill Runner service before production approval.
 
 ### Layer 3: MCP Gateway — The Claude Bridge (`services/mcp-gateway`)
 - **Dual Transport** — Streamable HTTP transport (port 3001) for Claude.ai and Stdio JSON-RPC 2.0 transport for local agents
@@ -402,14 +405,14 @@ Behind the scenes:
 2. MCP Gateway auto-resolves locked vault ID and validates permissions
 3. Skill Runner decrypts skill in volatile RAM, executes with parameters
 4. Polished executive briefing returned to user
-5. **Underlying prompt, template, and code remain 100% hidden**
+5. Target guarantee: underlying prompt, template, and code remain hidden. Production proof is pending the independent-runner and red-team epics.
 
 ### Journey 4: Searching Company Knowledge (Consultant)
 > Consultant: *"What's our architecture standard for fintech clients?"*
 
 Behind the scenes:
 1. Claude calls `get_context("fintech architecture standards")`
-2. Vault runs hybrid search: BM25 keyword + pgvector semantic
+2. Target behavior: Vault runs verified lexical ranking plus pgvector semantic retrieval. The current implementation still uses `ILIKE` lexical matching and a deterministic hash-vector fallback; Epic 5 tracks the production implementation.
 3. Top results + 1-hop linked pages packed within token budget
 4. Claude synthesizes a comprehensive answer citing specific vault pages
 
@@ -430,8 +433,8 @@ Behind the scenes:
 | `get_context` | Open Retrieval | Assemble token-budgeted context packages with target pages and backlinks |
 | `add_note` | Open Authoring | Append timeline entries or create draft pages in open vaults |
 | `list_skills` | Locked Discovery | Discover all proprietary locked skills with their `vaultId`, name, description, and parameters |
-| `run_skill` | Locked Execution | Execute locked skills in zero-read sandbox (`vaultId` is optional and auto-resolved) |
-| `ask_vault` | Locked Query | Query locked proprietary vaults without exposing raw markdown (`vaultId` optional) |
+| `run_skill` | Locked Execution | Execute a locked skill in the zero-read sandbox; a vault ID is required and server-authorized |
+| `ask_vault` | Locked Query | Query a locked vault without exposing raw markdown; a vault ID is required and server-authorized |
 
 ### Connecting Claude Desktop / Codex / Cursor
 Add the following to your MCP client config (`%APPDATA%\Claude\claude_desktop_config.json`):
@@ -572,31 +575,20 @@ Built across **18 milestones** following a strict **Epic Review Gate Protocol**:
 | **Epic 3** | Streamable HTTP MCP Gateway, OAuth 2.1 PKCE, dynamic tool palettes, rate limiting |
 | **Epic 4** | Skill manifest validator, ephemeral sandbox, Claude Messages orchestrator, anti-exfiltration sanitizer |
 | **Epic 5** | Admin Web App, TipTap editor, D3 knowledge graph, sharing modal, audit dashboard |
-| **Epic 6** | 22-probe adversarial test suite, cross-vault isolation tests, ciphertext audit, all 10 SRS acceptance criteria verified |
+| **Epic 6** | Historical adversarial, isolation, and ciphertext test scaffolding; production acceptance was reopened by the 2026-09-16 audit |
 | **Milestones 7–18** | Database sharing, empty states, dual-layer persistence, desktop density calibration, AI Co-Pilot, 10-epic UX redesign, in-place Mermaid rendering, folder hierarchy |
 
 ---
 
 ## 16. Testing & Quality Assurance
 
-### Test Suite Summary: 141 Passing Tests (0 Failures)
-- `@tkxel-vault/types`: 5 passed
-- `@tkxel-vault/vault-core`: 19 passed
-- `@tkxel-vault/skill-runner`: 33 passed (including 22 adversarial prompt injection probes)
-- `@tkxel-vault/mcp-gateway`: 19 passed
-- `@tkxel-vault/web-app`: 65 passed
+### Current Test Baseline
 
-### SRS Acceptance Criteria (All 10 Satisfied)
-1. ✅ End-to-end context retrieval via Claude
-2. ✅ Link refactoring integrity on rename
-3. ✅ 500-page Obsidian vault bulk import
-4. ✅ Locked skill execution through Claude
-5. ✅ 20+ adversarial prompt injection attempts blocked
-6. ✅ Strict multi-tenant vault isolation
-7. ✅ Sub-60s access revocation enforcement
-8. ✅ Automated SSO deprovisioning
-9. ✅ Zero privilege escalation (consumer → locked files)
-10. ✅ 100% ciphertext storage + dual-mode export validation
+The latest uncached local run on 2026-09-21 completed **12/12 tasks** successfully. This is code-health evidence, not production sign-off. Release approval remains blocked on a genuine cloud-KMS and hosted-LLM smoke test, plus remediation of the legacy plaintext timeline-entry field identified in the data dictionary.
+
+### SRS Acceptance Status
+
+The earlier all-10-satisfied claim is withdrawn. See [srs_compliance_report.md](./srs_compliance_report.md) for current evidence status. Criteria involving hybrid retrieval, locked execution, multi-tenant isolation, privilege escalation, and ciphertext-only storage require remediation and production-path verification.
 
 ---
 
@@ -605,9 +597,9 @@ Built across **18 milestones** following a strict **Epic Review Gate Protocol**:
 ### Monorepo Commands
 | Command | What It Does |
 |:---|:---|
-| `pnpm dev` | Start Web App, API Server, and Skill Runner via Turborepo |
+| `pnpm dev` | Start the development services, including the independent Skill Runner |
 | `pnpm build` | Production build across all packages |
-| `pnpm test` | Run all 141 tests across all packages |
+| `pnpm test` | Run package tests; use an uncached Turbo run for release evidence |
 | `pnpm lint` | Lint all packages |
 | `pnpm typecheck` | TypeScript type checking |
 | `pnpm docker:up` | Start PostgreSQL 16 + Redis 7 containers |
@@ -736,7 +728,7 @@ Think of **tkxel Vault** as two products in one:
 When you save a note:
 1. The text is broken into small chunks and converted into **AI vector numbers** using an embedding model.
 2. The text is also indexed for **exact word matches**.
-When Claude asks *"What do we know about Client X?"*, the database runs both searches at once, grabs the best matching notes, and hands them to Claude in under 250ms.
+When Claude asks *"What do we know about Client X?"*, the database runs lexical and semantic retrieval for an open vault, then assembles the best matching notes. Latency objectives require deployment-specific measurement; this repository does not claim a production latency result.
 
 ### Layer 3: Vault Security & Encryption
 - **Envelope Encryption:** Every vault has its own unique encryption key.
@@ -785,7 +777,7 @@ Instead of starting from zero, **tkxel Vault combines the strengths of both**:
 
 ## 26. Summary: Why This Tech Stack?
 
-- **Fast:** PostgreSQL + `pgvector` handles hybrid search in under 250ms.
+- **Searchable:** PostgreSQL + `pgvector` provides hybrid retrieval for open vaults; production latency must be measured in the target environment.
 - **Secure:** Zero plaintext storage; keys live only in RAM during execution.
 - **Standard-Compliant:** Anthropic Remote MCP (Streamable HTTP 2025-11-25) connects Claude natively.
 - **Future-Proof:** Clean modular separation between web frontend, backend persistence, MCP gateway, and sandbox execution.

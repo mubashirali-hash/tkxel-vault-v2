@@ -106,20 +106,165 @@ export class AwsKmsProvider implements KmsProvider {
 }
 
 /**
+ * Azure Key Vault Key Provider.
+ *
+ * Uses the Azure Key Vault REST API's wrapkey/unwrapkey operations. The bearer
+ * token is supplied by the deployment's workload identity integration and is
+ * never persisted or logged by this provider.
+ */
+export class AzureKeyVaultProvider implements KmsProvider {
+  private vaultUrl: string;
+  private keyName: string;
+  private bearerToken: string;
+
+  constructor(vaultUrl: string, keyName: string, bearerToken: string) {
+    if (!vaultUrl || !keyName || !bearerToken) {
+      throw new Error('Azure Key Vault requires vault URL, key name, and workload identity bearer token.');
+    }
+    this.vaultUrl = vaultUrl.replace(/\/+$/, '');
+    this.keyName = keyName;
+    this.bearerToken = bearerToken;
+  }
+
+  async wrapKey(plaintextKey: Buffer): Promise<string> {
+    if (plaintextKey.length !== 32) {
+      throw new Error('DEK must be exactly 32 bytes (256 bits).');
+    }
+    const value = await this.callKeyOperation('wrapkey', {
+      alg: 'RSA-OAEP-256',
+      value: plaintextKey.toString('base64url'),
+    });
+    return value;
+  }
+
+  async unwrapKey(wrappedKeyString: string): Promise<Buffer> {
+    const value = await this.callKeyOperation('unwrapkey', {
+      alg: 'RSA-OAEP-256',
+      value: wrappedKeyString,
+    });
+    return Buffer.from(value, 'base64url');
+  }
+
+  private async callKeyOperation(operation: 'wrapkey' | 'unwrapkey', body: Record<string, string>): Promise<string> {
+    const response = await fetch(
+      `${this.vaultUrl}/keys/${encodeURIComponent(this.keyName)}/${operation}?api-version=7.4`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.bearerToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`Azure Key Vault ${operation} request failed with status ${response.status}`);
+    }
+    const payload: unknown = await response.json();
+    if (!payload || typeof payload !== 'object' || typeof (payload as { value?: unknown }).value !== 'string') {
+      throw new Error(`Azure Key Vault ${operation} response missing value.`);
+    }
+    return (payload as { value: string }).value;
+  }
+}
+
+/**
+ * Standalone HTTP KMS Provider
+ * Connects over HTTP to an external KMS / HSM endpoint with bearer authentication.
+ */
+export class HttpKmsProvider implements KmsProvider {
+  private endpoint: string;
+  private apiKey: string;
+
+  constructor(endpoint: string, apiKey = '') {
+    this.endpoint = endpoint.replace(/\/+$/, '');
+    this.apiKey = apiKey;
+  }
+
+  async wrapKey(plaintextKey: Buffer): Promise<string> {
+    if (plaintextKey.length !== 32) {
+      throw new Error('DEK must be exactly 32 bytes (256 bits).');
+    }
+    const res = await fetch(`${this.endpoint}/kms/wrap-key`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
+      },
+      body: JSON.stringify({ plaintextKey: plaintextKey.toString('base64') }),
+    });
+    if (!res.ok) {
+      throw new Error(`KMS wrap-key request failed with status ${res.status}`);
+    }
+    const data: any = await res.json();
+    if (!data.wrappedKey) {
+      throw new Error('KMS wrap-key response missing wrappedKey.');
+    }
+    return data.wrappedKey;
+  }
+
+  async unwrapKey(wrappedKeyString: string): Promise<Buffer> {
+    const res = await fetch(`${this.endpoint}/kms/unwrap-key`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
+      },
+      body: JSON.stringify({ wrappedKey: wrappedKeyString }),
+    });
+    if (!res.ok) {
+      throw new Error(`KMS unwrap-key request failed with status ${res.status}`);
+    }
+    const data: any = await res.json();
+    if (!data.plaintextKey) {
+      throw new Error('KMS unwrap-key response missing plaintextKey.');
+    }
+    return Buffer.from(data.plaintextKey, 'base64');
+  }
+}
+
+/**
  * Pluggable KMS Provider Factory
  */
 export function createKmsProvider(): KmsProvider {
   const provider = (process.env.KMS_PROVIDER || 'mock').toLowerCase();
+  if (provider === 'http') {
+    if (process.env.NODE_ENV === 'production' && process.env.ACCEPTANCE_TESTING !== 'true') {
+      throw new Error('FATAL: HTTP KMS provider is acceptance-only and not permitted in production. Configure AWS KMS (KMS_PROVIDER=aws) or Azure Key Vault.');
+    }
+    const endpoint = process.env.KMS_ENDPOINT || 'http://127.0.0.1:8443';
+    if (process.env.ACCEPTANCE_TESTING === 'true') {
+      const host = new URL(endpoint).hostname;
+      if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') {
+        throw new Error('FATAL: acceptance HTTP KMS must use a loopback contract-test-double endpoint.');
+      }
+    }
+    return new HttpKmsProvider(endpoint, process.env.KMS_API_KEY || '');
+  }
   if (provider === 'aws') {
     const keyId = process.env.AWS_KMS_KEY_ID;
     if (!keyId) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('FATAL: AWS_KMS_KEY_ID must be configured in production when KMS_PROVIDER=aws.');
+      }
       console.warn('[KMS] AWS_KMS_KEY_ID unset; defaulting to MockKmsProvider.');
       return new MockKmsProvider();
     }
     return new AwsKmsProvider(keyId, process.env.AWS_REGION || 'us-east-1');
   }
-  if (process.env.NODE_ENV === 'production' && !process.env.VAULT_MASTER_SECRET) {
-    throw new Error('FATAL: VAULT_MASTER_SECRET must be explicitly configured in production environments.');
+  if (provider === 'azure') {
+    const vaultUrl = process.env.AZURE_KEY_VAULT_URL;
+    const keyName = process.env.AZURE_KEY_VAULT_KEY_NAME;
+    const bearerToken = process.env.AZURE_KEY_VAULT_BEARER_TOKEN;
+    if (!vaultUrl || !keyName || !bearerToken) {
+      throw new Error(
+        'FATAL: Azure Key Vault requires AZURE_KEY_VAULT_URL, AZURE_KEY_VAULT_KEY_NAME, and AZURE_KEY_VAULT_BEARER_TOKEN.'
+      );
+    }
+    return new AzureKeyVaultProvider(vaultUrl, keyName, bearerToken);
+  }
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('FATAL: Mock KMS provider is not permitted in production. Configure AWS KMS (KMS_PROVIDER=aws) or Azure Key Vault.');
   }
   const secret = process.env.VAULT_MASTER_SECRET || 'tkxel-vault-default-local-master-key-32b!';
   return new MockKmsProvider(secret);

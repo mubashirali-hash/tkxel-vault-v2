@@ -1,4 +1,5 @@
 import { SuggestedLink, AiCategorySuggestion, SkillDraft, VaultNoteFull, AiAction, SkillClassification, AutoApplyWikiLinksResult } from './types.js';
+import { getAuthToken } from '../../utils/storage.js';
 
 const API_BASE = 'http://localhost:3002/api/ai';
 
@@ -6,7 +7,7 @@ export class NotesAiClient {
   private static getAuthHeaders(): Record<string, string> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('ssoToken');
+      const token = getAuthToken();
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }

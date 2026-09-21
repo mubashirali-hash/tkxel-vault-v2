@@ -94,3 +94,52 @@ test('OAuth Fast Revocation: immediate token or user deprovisioning terminates s
     /Token or user access has been revoked/
   );
 });
+
+test('Redis Revocation Store: enforces atomic revocation against live/mock Redis', async () => {
+  const { RedisRevocationStore } = await import('../dist/auth/oauth.js');
+
+  // Test with in-memory map mock of Redis key-value store
+  const redisMap = new Map();
+  const mockRedis = {
+    async get(k) { return redisMap.get(k) || null; },
+    async set(k, v) { redisMap.set(k, v); return 'OK'; },
+  };
+
+  const redisStore = new RedisRevocationStore(mockRedis);
+  const validator = new OAuthValidator('test-secret-key-32b-length-ok!!!', redisStore);
+
+  const token = validator.createToken({
+    userId: 'usr_redis_test',
+    email: 'redis@tkxel.com',
+    tokenId: 'tok_redis_1',
+  });
+
+  // 1. Initial valid
+  const claims = await validator.validateToken(`Bearer ${token}`);
+  assert.equal(claims.userId, 'usr_redis_test');
+
+  // 2. Revoke token
+  await redisStore.revokeToken('tok_redis_1');
+  assert.equal(await redisStore.isRevoked('usr_redis_test', 'tok_redis_1'), true);
+  await assert.rejects(
+    async () => {
+      await validator.validateToken(`Bearer ${token}`);
+    },
+    /Token or user access has been revoked/
+  );
+
+  // 3. Revoke user
+  const token2 = validator.createToken({
+    userId: 'usr_redis_user_2',
+    email: 'redis2@tkxel.com',
+    tokenId: 'tok_redis_2',
+  });
+  await redisStore.revokeUser('usr_redis_user_2');
+  assert.equal(await redisStore.isRevoked('usr_redis_user_2', 'tok_redis_2'), true);
+  await assert.rejects(
+    async () => {
+      await validator.validateToken(`Bearer ${token2}`);
+    },
+    /Token or user access has been revoked/
+  );
+});

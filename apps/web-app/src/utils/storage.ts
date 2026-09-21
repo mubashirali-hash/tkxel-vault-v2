@@ -1,5 +1,57 @@
-import { Page, Share, AuditEvent, TimelineEntry, VaultRole } from '@tkxel-vault/types';
-import { SkillItem } from '../components/skills/AddSkillModal.js';
+import type { Page, Share, AuditEvent, TimelineEntry, VaultRole } from '@tkxel-vault/types';
+import type { SkillItem } from '../components/skills/AddSkillModal.js';
+
+/**
+ * Secure Auth Token Storage for tkxel Vault Web App
+ * Adheres to ADR-017 & OAuth 2.1 SPA Guidance:
+ * - Production bearer tokens are stored in sessionStorage (session-scoped) rather than persistent localStorage.
+ * - Tokens expire automatically when the tab/window is closed.
+ * - Legacy tokens in localStorage are actively scrubbed.
+ */
+export function getAuthToken(): string | null {
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage.getItem('ssoToken')) {
+      const legacy = localStorage.getItem('ssoToken');
+      localStorage.removeItem('ssoToken');
+      if (legacy && typeof sessionStorage !== 'undefined') {
+        sessionStorage.setItem('ssoToken', legacy);
+      }
+      return legacy;
+    }
+    if (typeof sessionStorage !== 'undefined') {
+      return sessionStorage.getItem('ssoToken');
+    }
+  } catch (err) {
+    console.warn('Failed to read auth token from sessionStorage:', err);
+  }
+  return null;
+}
+
+export function setAuthToken(token: string): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('ssoToken');
+    }
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem('ssoToken', token);
+    }
+  } catch (err) {
+    console.warn('Failed to write auth token to sessionStorage:', err);
+  }
+}
+
+export function removeAuthToken(): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('ssoToken');
+    }
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.removeItem('ssoToken');
+    }
+  } catch (err) {
+    console.warn('Failed to remove auth token:', err);
+  }
+}
 
 export interface VaultData {
   pages: Page[];
@@ -13,12 +65,41 @@ export interface VaultData {
 
 const API_URL = 'http://localhost:3002/api';
 
-export function saveVaultLocalCache(vaultId: string, data: Partial<VaultData>): void {
+let lastDbFailureTime = 0;
+const DB_FAILURE_COOLDOWN_MS = 15000;
+
+export function saveVaultLocalCache(vaultId: string, data: Partial<VaultData>, vaultMode?: string): void {
   try {
     const key = `tkxel_vault_cache_${vaultId}`;
+    if (vaultMode === 'locked') {
+      localStorage.removeItem(key);
+      return;
+    }
     const raw = localStorage.getItem(key);
     const existing = raw ? JSON.parse(raw) : {};
-    const merged = { ...existing, ...data, cached_at: new Date().toISOString() };
+
+    // Zero-read invariant: note content and front_matter body must NEVER hit localStorage (ADR-017)
+    const sanitizedPages = data.pages
+      ? data.pages.map((p: any) => {
+          const { content, ...rest } = p;
+          if (rest.front_matter && typeof rest.front_matter === 'object') {
+            const { body, ...cleanFm } = rest.front_matter;
+            rest.front_matter = cleanFm;
+          }
+          return rest;
+        })
+      : existing.pages;
+
+    const merged = {
+      ...existing,
+      ...data,
+      pages: sanitizedPages,
+      cached_at: new Date().toISOString(),
+    };
+
+    // Zero-read invariant: locked skills are NEVER persisted in browser storage
+    delete (merged as any).lockedSkills;
+
     localStorage.setItem(key, JSON.stringify(merged));
   } catch (err) {
     console.warn('Failed to save vault local cache:', err);
@@ -34,11 +115,12 @@ export function getVaultLocalCache(vaultId: string): VaultData | null {
       pages: (parsed.pages || []).map((p: any) => ({
         ...p,
         folder: p.folder || (p.front_matter?.folder as string) || undefined,
+        content: '', // Plaintext note content is never restored from browser cache (ADR-017)
         created_at: new Date(p.created_at),
         updated_at: p.updated_at ? new Date(p.updated_at) : undefined,
       })),
       links: parsed.links || [],
-      lockedSkills: (parsed.lockedSkills || []).map((s: any) => ({ ...s, created_at: new Date(s.created_at) })),
+      lockedSkills: [], // Zero-read invariant: locked skills never retrieved from browser cache
       timelineEntries: (parsed.timelineEntries || []).map((t: any) => ({ ...t, created_at: new Date(t.created_at) })),
       shares: (parsed.shares || []).map((s: any) => ({ ...s, granted_at: new Date(s.granted_at) })),
       auditEvents: (parsed.auditEvents || []).map((a: any) => ({ ...a, timestamp: new Date(a.timestamp) })),
@@ -48,10 +130,26 @@ export function getVaultLocalCache(vaultId: string): VaultData | null {
   }
 }
 
-export async function loadVaultData(vaultId: string, userId: string = 'usr_admin'): Promise<VaultData | null> {
-  const token = localStorage.getItem('ssoToken');
+export async function loadVaultData(vaultId: string, userId: string = 'usr_admin', vaultMode?: string): Promise<VaultData | null> {
+  const token = getAuthToken();
   const headers: Record<string, string> = { 'x-user-id': userId };
   if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  // Locked vaults have zero browser caching
+  if (vaultMode === 'locked') {
+    try {
+      localStorage.removeItem(`tkxel_vault_cache_${vaultId}`);
+    } catch {}
+  } else {
+    // If we had a database outage recently, use local cache immediately to avoid spamming the backend
+    const now = Date.now();
+    if (now - lastDbFailureTime < DB_FAILURE_COOLDOWN_MS) {
+      const cached = getVaultLocalCache(vaultId);
+      if (cached && cached.pages.length > 0) {
+        return cached;
+      }
+    }
+  }
 
   try {
     const [pagesRes, linksRes, skillsRes, timelineRes, sharesRes, auditsRes] = await Promise.all([
@@ -62,6 +160,13 @@ export async function loadVaultData(vaultId: string, userId: string = 'usr_admin
       fetch(`${API_URL}/vaults/${vaultId}/shares`, { headers }).catch(() => null),
       fetch(`${API_URL}/vaults/${vaultId}/audits`, { headers }).catch(() => null),
     ]);
+
+    const anyServerError = [pagesRes, linksRes, skillsRes, timelineRes, sharesRes, auditsRes].some(
+      (res) => res && (res.status === 500 || res.status === 503)
+    );
+    if (anyServerError) {
+      lastDbFailureTime = Date.now();
+    }
 
     const [pagesData, linksData, skillsData, timelineData, sharesData, auditsData] = await Promise.all([
       pagesRes?.ok ? pagesRes.json() : null,
@@ -87,14 +192,18 @@ export async function loadVaultData(vaultId: string, userId: string = 'usr_admin
         shares: (sharesData?.shares || []).map((s: any) => ({ ...s, granted_at: new Date(s.granted_at) })),
         auditEvents: (auditsData?.auditEvents || []).map((a: any) => ({ ...a, timestamp: new Date(a.timestamp) })),
       };
-      saveVaultLocalCache(vaultId, result);
+      if (vaultMode !== 'locked') {
+        saveVaultLocalCache(vaultId, result, vaultMode);
+      }
       return result;
     }
 
-    // If server is offline or returned empty, check local cache fallback
-    const localCached = getVaultLocalCache(vaultId);
-    if (localCached && localCached.pages.length > 0) {
-      return localCached;
+    if (vaultMode !== 'locked') {
+      // If server is offline or returned empty, check local cache fallback
+      const localCached = getVaultLocalCache(vaultId);
+      if (localCached && localCached.pages.length > 0) {
+        return localCached;
+      }
     }
 
     return {
@@ -111,8 +220,9 @@ export async function loadVaultData(vaultId: string, userId: string = 'usr_admin
       auditEvents: (auditsData?.auditEvents || []).map((a: any) => ({ ...a, timestamp: new Date(a.timestamp) })),
     };
   } catch (err) {
+    lastDbFailureTime = Date.now();
     console.error('Failed to load vault data, attempting cache fallback:', err);
-    return getVaultLocalCache(vaultId);
+    return vaultMode === 'locked' ? null : getVaultLocalCache(vaultId);
   }
 }
 
@@ -122,7 +232,7 @@ export async function importVaultData(
   links: any[],
   userId: string = 'usr_admin'
 ): Promise<void> {
-  const token = localStorage.getItem('ssoToken');
+  const token = getAuthToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'x-user-id': userId,
@@ -141,9 +251,20 @@ export async function importVaultData(
 }
 
 export async function clearVaultState(): Promise<void> {
-  // tkxel_vault_storage_v1 is intentionally abandoned/cleared if found
   try {
+    removeAuthToken();
+    localStorage.removeItem('ssoToken');
     localStorage.removeItem('tkxel_vault_storage_v1');
+    const toRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && (key.startsWith('tkxel_vault_cache_') || key.startsWith('tkxel_vault_storage_'))) {
+        toRemove.push(key);
+      }
+    }
+    for (const k of toRemove) {
+      localStorage.removeItem(k);
+    }
   } catch (err) {
     console.error('Failed to clear tkxel Vault localStorage:', err);
   }

@@ -34,10 +34,15 @@ test('Hybrid Search: Reciprocal Rank Fusion fuses BM25 and Vector rankings', () 
 
   const fused = engine.fuseResults(bm25Results, vectorResults, 5);
 
-  // doc_2 appeared in both top ranks -> should rank first in RRF!
+  // doc_2 appeared in both top ranks -> should rank first in RRF with source hybrid!
   assert.equal(fused[0].id, 'doc_2');
   assert.equal(fused[0].source, 'hybrid');
   assert.ok(fused[0].score > fused[1].score);
+
+  const doc1 = fused.find((r) => r.id === 'doc_1');
+  const doc3 = fused.find((r) => r.id === 'doc_3');
+  assert.equal(doc1.source, 'lexical', 'Item present only in lexical rankings must have source lexical');
+  assert.equal(doc3.source, 'vector', 'Item present only in vector rankings must have source vector');
 });
 
 test('Context Aggregator: assembles 1-hop neighborhood into Markdown prompt bundle', () => {

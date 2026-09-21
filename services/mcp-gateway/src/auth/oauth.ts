@@ -42,6 +42,35 @@ export class InMemoryRevocationStore implements RevocationStore {
 }
 
 /**
+ * Production Redis Revocation Store for sub-60-second distributed revocation SLA (FR-54, FR-65).
+ */
+export class RedisRevocationStore implements RevocationStore {
+  private redis: any;
+
+  constructor(redisClient: any) {
+    this.redis = redisClient;
+  }
+
+  public async isRevoked(userId: string, tokenId: string): Promise<boolean> {
+    const userRevoked = await this.redis.get(`revoked:user:${userId}`);
+    if (userRevoked) return true;
+    if (tokenId) {
+      const tokenRevoked = await this.redis.get(`revoked:token:${tokenId}`);
+      if (tokenRevoked) return true;
+    }
+    return false;
+  }
+
+  public async revokeToken(tokenId: string, ttlSeconds = 86400): Promise<void> {
+    await this.redis.set(`revoked:token:${tokenId}`, '1', 'EX', ttlSeconds);
+  }
+
+  public async revokeUser(userId: string, ttlSeconds = 86400): Promise<void> {
+    await this.redis.set(`revoked:user:${userId}`, '1', 'EX', ttlSeconds);
+  }
+}
+
+/**
  * OAuth 2.1 PKCE & Corporate SSO Token Validator (FR-61, FR-65, FR-91).
  * Verifies JWT tokens, extracts claims, and enforces sub-60-second revocation SLA via RevocationStore.
  */

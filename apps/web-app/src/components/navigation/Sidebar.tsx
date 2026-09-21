@@ -12,6 +12,7 @@ import {
   Sparkles,
   Trash2,
   X,
+  ArrowRight,
 } from 'lucide-react';
 import { Page, Vault, VaultRole } from '@tkxel-vault/types';
 import { ActionMenu, ActionMenuItem, Button, Dialog, EmptyState, IconButton } from '../ui/index.js';
@@ -30,6 +31,7 @@ export interface SidebarProps {
   onDeleteFolder?: (folderName: string) => void;
   onDeletePage?: (pageId: string) => void;
   onOpenConvertToSkill?: (page: Page) => void;
+  onOpenMoveToVault?: (page: Page) => void;
   onConvertFolderToSkill?: (folderName: string) => void;
   onCreateHubPage?: (folderName: string) => void;
   isNavigationOpen?: boolean;
@@ -52,6 +54,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onDeleteFolder,
   onDeletePage,
   onOpenConvertToSkill,
+  onOpenMoveToVault,
   onConvertFolderToSkill,
   onCreateHubPage,
   isNavigationOpen = false,
@@ -414,12 +417,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
           <label className="notes-sidebar__search">
             <Search size={16} aria-hidden="true" />
-            <span className="sr-only">Search agents and tags</span>
+            <span className="sr-only">Search notes and tags</span>
             <input
               id="sidebar-vault-search"
               name="vault-search"
               type="search"
-              placeholder="Search items, skills, tags"
+              placeholder="Search notes, tags, or content"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
             />
@@ -518,7 +521,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <Dialog
         open={isNewFolderOpen}
         title="Create new folder"
-        description="Organize your agents by domain, project, client, or team."
+        description="Organize your notes by domain, project, client, or team."
         onClose={() => setIsNewFolderOpen(false)}
         footer={(
           <>
@@ -539,6 +542,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </label>
             <input
               id="new-folder-input"
+              name="new-folder-name"
               type="text"
               autoFocus
               placeholder="e.g. Agents, Clients, Projects, Architecture"
@@ -606,6 +610,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
         separatorBefore: true,
         onSelect: () => onMoveNoteToFolder?.(page.id, undefined),
       }] : []),
+      ...(onOpenMoveToVault ? [{
+        id: 'move-to-another-vault',
+        label: 'Move to another vault...',
+        icon: <ArrowRight size={13} />,
+        separatorBefore: true,
+        onSelect: () => onOpenMoveToVault(page),
+      }] : []),
     ];
 
     return (
@@ -651,7 +662,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {allFolders.length > 0 && onMoveNoteToFolder && moveMenuItems.length > 0 && (
               <ActionMenu
                 compact
-                label="Move agent"
+                label="Move note to folder"
                 items={moveMenuItems}
               />
             )}

@@ -25,6 +25,7 @@ export interface Page {
   aliases: string[];
   tags: string[];
   front_matter: Record<string, unknown>;
+  content?: string; // Decrypted markdown content populated dynamically on read
   current_version_id?: string | null;
   created_at: Date;
   updated_at?: Date;

@@ -92,6 +92,12 @@ In Cursor **Settings > Features > MCP**:
 - Type: `sse` (or `http`)
 - URL: `http://<PUBLIC_IP>:3001/mcp`
 
+## 5. Production deployment prerequisites
+
+This guide is a deployment scaffold, not production approval. Before exposing an endpoint, place the gateway behind approved TLS ingress, use a DNS name rather than a raw public IP, and inject KMS, runner, Redis, SSO, and hosted-LLM credentials through the workload secret manager. Do not publish the skill-runner port on the host network.
+
+Production promotion requires the smoke-test and failure-mode evidence in the [production operations runbook](./runbooks/PRODUCTION_OPERATIONS_RUNBOOK.md#6-production-provider-smoke-test-release-requirement), plus remediation of the plaintext timeline-entry field identified in the [data dictionary](./DATA_DICTIONARY.md).
+
 ---
 
 ## 5. Cost Teardown (When Testing Completes)

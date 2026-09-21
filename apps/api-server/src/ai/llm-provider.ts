@@ -232,5 +232,9 @@ export function getLlmProvider(): LlmProvider {
     return new OpenAiLlmProvider(openAiKey);
   }
 
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('FATAL: Approved LLM provider API key (ANTHROPIC_API_KEY, GEMINI_API_KEY, or OPENAI_API_KEY) must be configured in production mode. Mock LLM is disallowed.');
+  }
+
   return new MockLlmProvider();
 }

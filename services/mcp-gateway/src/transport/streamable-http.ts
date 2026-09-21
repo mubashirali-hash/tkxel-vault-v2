@@ -38,9 +38,15 @@ export interface ToolCallResult {
   isError?: boolean;
 }
 
+export interface ToolCallContext {
+  userId: string;
+  roles: Map<string, string>;
+  vaultModes?: Map<string, 'open' | 'locked'>;
+}
+
 export type ToolHandler = (
   params: Record<string, unknown>,
-  context: { userId: string; roles: Map<string, string> }
+  context: ToolCallContext
 ) => Promise<ToolCallResult>;
 
 /**
@@ -70,6 +76,7 @@ export class StreamableHttpTransport {
     callerContext: {
       userId: string;
       roles: Map<string, string>;
+      vaultModes?: Map<string, 'open' | 'locked'>;
       authorizedTools: Set<string>;
     }
   ): Promise<JsonRpcResponse | null> {
@@ -152,6 +159,7 @@ export class StreamableHttpTransport {
         const result = await tool.handler(toolArguments, {
           userId: callerContext.userId,
           roles: callerContext.roles,
+          vaultModes: callerContext.vaultModes,
         });
 
         return {

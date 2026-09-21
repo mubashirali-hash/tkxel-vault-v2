@@ -21,6 +21,7 @@ In accordance with [tkxel_vault_SRS.md](../../tkxel_vault_SRS.md) Invariant 2 an
 2. **KMS Provider Abstraction:**
    - Define a generic `KmsProvider` interface (`wrapKey`, `unwrapKey`).
    - Implement `AwsKmsProvider`, `AzureKeyVaultProvider`, and a local development `MockKmsProvider` (using a master seed key) to facilitate local testing and offline CI/CD verification without requiring live cloud credentials.
+   - The Azure adapter uses Key Vault's `wrapkey` and `unwrapkey` REST operations with `RSA-OAEP-256`. Production Azure configuration requires `AZURE_KEY_VAULT_URL`, `AZURE_KEY_VAULT_KEY_NAME`, and a short-lived `AZURE_KEY_VAULT_BEARER_TOKEN` supplied by the deployment workload identity; these values must not be logged or stored in the database.
 3. **Volatile Key Lifetime:**
    - DEKs are unwrapped strictly in process memory (RAM) when performing cryptographic operations and immediately garbage-collected; keys are never persisted to disk.
 

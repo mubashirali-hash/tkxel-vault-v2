@@ -16,6 +16,7 @@
     "clean": "rimraf dist"
   },
   "dependencies": {
+    "@tkxel-vault/skill-runner": "workspace:*",
     "@tkxel-vault/types": "workspace:*",
     "@tkxel-vault/vault-core": "workspace:*",
     "drizzle-orm": "^0.45.2",

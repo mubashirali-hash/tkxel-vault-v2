@@ -1,6 +1,6 @@
-import { sql, eq, inArray, and } from 'drizzle-orm';
+import { sql, eq, inArray, and, desc } from 'drizzle-orm';
 import { db } from '../db.js';
-import { chunks, pages, links, vaults } from '../schema/index.js';
+import { chunks, pages, links, vaults, versions } from '../schema/index.js';
 import { HybridSearchEngine, SearchResultItem } from './hybrid.js';
 import { createKmsProvider, EnvelopeEncryption } from '../crypto/kms.js';
 
@@ -14,35 +14,40 @@ export class ContextAssembler {
    */
   public async getContext(vaultId: string, pageId: string, _query?: string, maxTokens: number = 4000) {
     // 1. Fetch the target page content and Vault DEK
-    const vaultRes = await db.query.vaults.findFirst({
-      where: eq(vaults.id, vaultId)
-    });
+    const [vaultRes] = await db.select().from(vaults).where(eq(vaults.id, vaultId)).limit(1);
     if (!vaultRes) throw new Error('Vault not found');
 
     const kms = createKmsProvider();
     const dek = await kms.unwrapKey(vaultRes.data_key_id);
 
-    const targetPageRes = await db.query.pages.findFirst({
-      where: and(eq(pages.id, pageId), eq(pages.vault_id, vaultId)),
-      with: {
-        versions: { orderBy: (v: any, { desc }: any) => [desc(v.number)], limit: 1 }
-      }
-    });
+    const [targetPageRes] = await db
+      .select()
+      .from(pages)
+      .where(and(eq(pages.id, pageId), eq(pages.vault_id, vaultId)))
+      .limit(1);
 
     if (!targetPageRes) {
       throw new Error('Page not found');
     }
 
     let targetContent = 'Content not available for plain text retrieval.';
-    const targetChunks = await db.query.chunks.findMany({
-      where: eq(chunks.page_id, pageId),
-      orderBy: (c: any, { asc }: any) => [asc(c.position)]
-    });
+    const targetChunks = await db.select().from(chunks)
+      .where(eq(chunks.page_id, pageId))
+      .orderBy(chunks.position);
+
     if (targetChunks.length > 0) {
       const decryptedParts = targetChunks.map(c => 
         EnvelopeEncryption.decryptToString(c.encrypted_text, dek)
       );
       targetContent = decryptedParts.join('\n\n');
+    } else {
+      const [latestVer] = await db.select().from(versions)
+        .where(eq(versions.page_id, pageId))
+        .orderBy(desc(versions.number))
+        .limit(1);
+      if (latestVer && latestVer.encrypted_blob) {
+        targetContent = EnvelopeEncryption.decryptToString(latestVer.encrypted_blob, dek);
+      }
     }
 
     const targetPage = {
@@ -53,12 +58,12 @@ export class ContextAssembler {
     };
 
     // 2. Fetch 1-hop outbound link neighbors
-    const outboundLinks = await db.query.links.findMany({
-      where: eq(links.from_page_id, pageId),
-      columns: { to_page_id: true }
-    });
+    const outboundLinks = await db
+      .select({ to_page_id: links.to_page_id })
+      .from(links)
+      .where(and(eq(links.from_page_id, pageId), eq(links.resolved, true)));
     
-    const outboundPageIds = outboundLinks.map(l => l.to_page_id).filter(id => id !== null) as string[];
+    const outboundPageIds = outboundLinks.map(l => l.to_page_id).filter((id): id is string => id !== null);
     const outboundPages: Array<{ pageId: string, title: string, content: string }> = [];
     
     if (outboundPageIds.length > 0) {
@@ -78,10 +83,10 @@ export class ContextAssembler {
     }
 
     // 3. Fetch 1-hop backlinks
-    const backLinks = await db.query.links.findMany({
-      where: eq(links.to_page_id, pageId),
-      columns: { from_page_id: true }
-    });
+    const backLinks = await db
+      .select({ from_page_id: links.from_page_id })
+      .from(links)
+      .where(and(eq(links.to_page_id, pageId), eq(links.resolved, true)));
     
     const backLinkPageIds = backLinks.map(l => l.from_page_id);
     const backlinkPages: Array<{ pageId: string, title: string, content: string }> = [];
