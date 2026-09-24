@@ -1,0 +1,161 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: tkxel-vault-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tkxel_vault
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d tkxel_vault"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: tkxel-vault-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  migration:
+    build:
+      context: .
+      target: migration
+    image: ${IMAGE_PREFIX:-tkxel-vault}/migration:${IMAGE_TAG:-latest}
+    container_name: tkxel-vault-migration
+    restart: "no"
+    environment:
+      - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/tkxel_vault
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api-server:
+    build:
+      context: .
+      target: api-server
+    image: ${IMAGE_PREFIX:-tkxel-vault}/api-server:${IMAGE_TAG:-latest}
+    container_name: tkxel-vault-api-server
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/tkxel_vault
+      - REDIS_URL=redis://redis:6379
+      - SKILL_RUNNER_URL=http://skill-runner:3003
+      - RUNNER_SHARED_SECRET=${RUNNER_SHARED_SECRET:?RUNNER_SHARED_SECRET is required}
+    ports:
+      - "3002:3002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+
+  skill-runner:
+    build:
+      context: .
+      target: skill-runner
+    image: ${IMAGE_PREFIX:-tkxel-vault}/skill-runner:${IMAGE_TAG:-latest}
+    container_name: tkxel-vault-skill-runner
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+          pids: 100
+    environment:
+      - HOME=/tmp
+      - NODE_ENV=${NODE_ENV:-production}
+      - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/tkxel_vault
+      - REDIS_URL=redis://redis:6379
+      - PORT=3003
+      - RUNNER_SHARED_SECRET=${RUNNER_SHARED_SECRET:?RUNNER_SHARED_SECRET is required}
+      - SANDBOX_RUNTIME=runsc
+      - ALLOW_DEV_MOCK_KMS=${ALLOW_DEV_MOCK_KMS:-false}
+      - ALLOW_DEV_MOCK_LLM=${ALLOW_DEV_MOCK_LLM:-false}
+      - ALLOW_DEV_HOST_SANDBOX=${ALLOW_DEV_HOST_SANDBOX:-false}
+      - KMS_PROVIDER=${KMS_PROVIDER:?KMS_PROVIDER is required}
+      - AWS_KMS_KEY_ID=${AWS_KMS_KEY_ID:-}
+      - AWS_REGION=${AWS_REGION:-}
+      - AZURE_KEY_VAULT_URL=${AZURE_KEY_VAULT_URL:-}
+      - AZURE_KEY_VAULT_KEY_NAME=${AZURE_KEY_VAULT_KEY_NAME:-}
+      - AZURE_KEY_VAULT_BEARER_TOKEN=${AZURE_KEY_VAULT_BEARER_TOKEN:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY is required}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:?EMBEDDING_PROVIDER is required}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+    expose:
+      - "3003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+
+  mcp-gateway:
+    build:
+      context: .
+      target: mcp-gateway
+    image: ${IMAGE_PREFIX:-tkxel-vault}/mcp-gateway:${IMAGE_TAG:-latest}
+    container_name: tkxel-vault-mcp-gateway
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/tkxel_vault
+      - REDIS_URL=redis://redis:6379
+      - SKILL_RUNNER_URL=http://skill-runner:3003
+      - RUNNER_SHARED_SECRET=${RUNNER_SHARED_SECRET:?RUNNER_SHARED_SECRET is required}
+      - SSO_WEBHOOK_SECRET=${SSO_WEBHOOK_SECRET:?SSO_WEBHOOK_SECRET is required}
+    ports:
+      - "3001:3001"
+    depends_on:
+      redis:
+        condition: service_healthy
+      skill-runner:
+        condition: service_started
+      migration:
+        condition: service_completed_successfully
+
+  web-app:
+    build:
+      context: .
+      target: web-app
+    image: ${IMAGE_PREFIX:-tkxel-vault}/web-app:${IMAGE_TAG:-latest}
+    container_name: tkxel-vault-web-app
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - api-server
+
+volumes:
+  postgres_data:
+  redis_data:

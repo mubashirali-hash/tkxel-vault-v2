@@ -1,0 +1,192 @@
+﻿AWSTemplateFormatVersion: '2010-09-09'
+Description: 'tkxel Vault: Low-Cost Turnkey Demo Stack on AWS EC2 with KMS Envelope Encryption'
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: 't3.small'
+    AllowedValues: ['t3.micro', 't3.small', 't3.medium', 't3.large']
+    Description: 'EC2 instance type for the demo container host.'
+
+  KeyPairName:
+    Type: String
+    Description: 'Name of an existing EC2 KeyPair for SSH access (optional, leave blank to use SSM).'
+    Default: ''
+
+  LatestUbuntuAmi:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id'
+    Description: 'SSM parameter dynamically resolving latest Ubuntu 24.04 LTS AMI in the current region.'
+
+Resources:
+  # 1. AWS KMS Master Key for Envelope Encryption
+  TkxelKmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: 'tkxel Vault Master Key Encryption Key (KEK) for envelope encryption'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Id: 'tkxel-vault-kms-policy'
+        Statement:
+          - Sid: 'Enable IAM User Permissions'
+            Effect: 'Allow'
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+
+  TkxelKmsAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: 'alias/tkxel-vault-demo-key'
+      TargetKeyId: !Ref TkxelKmsKey
+
+  # 2. Security Group
+  VaultSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Security group for tkxel Vault Demo Host'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3001
+          ToPort: 3001
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3002
+          ToPort: 3002
+          CidrIp: 0.0.0.0/0
+
+  # 3. IAM Role for Instance (Access to KMS and SSM)
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service: ['ec2.amazonaws.com']
+            Action: ['sts:AssumeRole']
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+      Policies:
+        - PolicyName: 'TkxelKmsAccess'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'kms:Encrypt'
+                  - 'kms:Decrypt'
+                  - 'kms:GenerateDataKey*'
+                  - 'kms:DescribeKey'
+                Resource: !GetAtt TkxelKmsKey.Arn
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  # 4. EC2 Demo Instance (Ubuntu 24.04 LTS)
+  DemoInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      SecurityGroupIds:
+        - !GetAtt VaultSecurityGroup.GroupId
+      IamInstanceProfile: !Ref InstanceProfile
+      KeyName: !If [HasKeyPair, !Ref KeyPairName, !Ref 'AWS::NoValue']
+      ImageId: !Ref LatestUbuntuAmi
+      BlockDeviceMappings:
+        - DeviceName: '/dev/sda1'
+          Ebs:
+            VolumeSize: 30
+            VolumeType: 'gp3'
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: tkxel-vault-demo-host
+        - Key: Environment
+          Value: demo
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+          echo "==> Setting up tkxel Vault Demo Host..."
+          apt-get update -y
+          apt-get install -y ca-certificates curl gnupg git
+
+          # Install Docker
+          install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          chmod a+r /etc/apt/keyrings/docker.asc
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+          apt-get update -y
+          apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+          # Clone tkxel Vault
+          mkdir -p /opt/tkxel-vault
+          cd /opt/tkxel-vault
+          if [ ! -d ".git" ]; then
+            git clone https://github.com/mubashirali-hash/tkxel-vault-v2.git .
+          else
+            git pull origin dev
+          fi
+          
+          # Create environment file with KMS ARN
+          cat << 'ENVFILE' > .env
+          POSTGRES_PASSWORD=tkxelSecureDemo2026
+          KMS_PROVIDER=aws
+          AWS_KMS_KEY_ID=${TkxelKmsKey.Arn}
+          ENVFILE
+
+          # Start container stack
+          docker compose up -d --build
+          echo "==> tkxel Vault running successfully!"
+
+  # 5. Elastic IP for static public address
+  DemoElasticIp:
+    Type: AWS::EC2::EIP
+    Properties:
+      InstanceId: !Ref DemoInstance
+
+Conditions:
+  HasKeyPair: !Not [!Equals [!Ref KeyPairName, '']]
+
+Outputs:
+  WebUrl:
+    Description: 'Public URL to tkxel Vault Web Application'
+    Value: !Sub 'http://${DemoElasticIp}:3000'
+  ApiUrl:
+    Description: 'Public URL to API Server'
+    Value: !Sub 'http://${DemoElasticIp}:3002/api'
+  McpGatewayUrl:
+    Description: 'Streamable HTTP MCP Gateway Endpoint'
+    Value: !Sub 'http://${DemoElasticIp}:3001/mcp'
+  KmsKeyArn:
+    Description: 'AWS KMS Master Key ARN'
+    Value: !GetAtt TkxelKmsKey.Arn
+  PublicIp:
+    Description: 'Public IP address of the Demo Host'
+    Value: !Ref DemoElasticIp
+  InstanceId:
+    Description: 'EC2 Instance ID for AWS SSM Management'
+    Value: !Ref DemoInstance

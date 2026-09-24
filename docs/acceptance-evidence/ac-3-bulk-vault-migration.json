@@ -1,0 +1,9 @@
+{
+  "criterion": "AC-3",
+  "name": "Bulk Vault Migration",
+  "status": "passed",
+  "executionTimeMs": 89,
+  "importedPagesCount": 2,
+  "skippedFilesCount": 1,
+  "encryptionVerified": "AES-256-GCM envelope encryption persisted in versions table"
+}

@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "capturedAt": "2026-09-09",
+  "rollback": {
+    "branch": "codex/ui-ux-redesign",
+    "tag": "ui-ux-redesign-baseline",
+    "commit": "cb83b61"
+  },
+  "viewports": [
+    { "name": "mobile", "width": 390, "height": 844 },
+    { "name": "tablet", "width": 768, "height": 1024 },
+    { "name": "compact-laptop", "width": 1024, "height": 768 },
+    { "name": "standard-desktop", "width": 1280, "height": 720 },
+    { "name": "wide-desktop", "width": 1440, "height": 900 }
+  ],
+  "surfaces": [
+    "open-notes",
+    "open-graph",
+    "open-audit",
+    "locked-skills",
+    "locked-audit"
+  ],
+  "contracts": [
+    "locked-vault-hides-open-graph",
+    "locked-vault-never-exports",
+    "open-vault-export-is-owner-only",
+    "markdown-and-front-matter-round-trip",
+    "wiki-links-and-aliases-remain-supported",
+    "timeline-remains-append-only",
+    "state-changing-actions-remain-audited"
+  ],
+  "baselineVerification": {
+    "typecheck": "passed",
+    "pipelineTasksPassed": 11,
+    "webAppTestsPassed": 13,
+    "productionBuild": "passed",
+    "mainBundleBytes": 1129910,
+    "mainBundleGzipBytes": 356350,
+    "bundleWarning": "Main JavaScript chunk exceeds 500 kB after minification."
+  },
+  "knownUxFindings": [
+    "fixed-sidebar-breaks-mobile-layout",
+    "compact-header-clips-actions",
+    "persistent-actions-are-duplicated",
+    "editor-action-hierarchy-is-crowded",
+    "locked-skills-are-duplicated",
+    "graph-is-difficult-to-interpret",
+    "audit-primary-view-exposes-raw-identifiers-and-json",
+    "responsive-and-aria-layers-are-incomplete"
+  ]
+}

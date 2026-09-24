@@ -1,0 +1,13 @@
+{
+  "criterion": "AC-1",
+  "name": "Context Retrieval Flow",
+  "status": "passed",
+  "executionTimeMs": 282,
+  "targetPageId": "02f67acd-9d6d-44a4-af70-99f31062c5cf",
+  "linkedPagesRetrieved": [
+    "d1c2a62f-0186-4b0b-a45e-4d36fc340c49",
+    "3021b8e4-7a98-48a8-83f9-e52303b6cdde"
+  ],
+  "tokenEstimate": 161,
+  "storageVerified": "PostgreSQL 16 with pgvector & links indexer"
+}

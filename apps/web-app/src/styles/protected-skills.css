@@ -1,0 +1,18 @@
+.protected-catalog { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-y: auto; gap: var(--space-5); padding: var(--space-6) clamp(18px, 3vw, 40px) !important; background: #f8fafc !important; }
+.protected-banner { padding: var(--space-4) !important; align-items: center !important; border-radius: var(--radius-lg) !important; }
+.protected-banner__details { margin-top: var(--space-2); color: #7c2d12; font-size: .76rem; }
+.protected-banner__details summary { width: fit-content; font-weight: 700; cursor: pointer; }
+.protected-banner__details p { max-width: 720px; margin: var(--space-2) 0 0; line-height: 1.55; }
+.protected-banner__details code { padding: 2px 5px; background: #ffedd5; border-radius: 4px; }
+.protected-health { grid-template-columns: repeat(3, 1fr) !important; gap: var(--space-2) !important; }
+.protected-health > div { min-height: 74px; padding: var(--space-3) !important; box-shadow: none !important; }
+.protected-health > div > div:nth-child(2) { font-size: .9rem !important; }
+.protected-grid { gap: var(--space-3) !important; }
+.protected-skill-card { border-radius: var(--radius-lg); box-shadow: var(--shadow-xs) !important; }
+
+@media (max-width: 760px) {
+  .protected-catalog { padding: var(--space-4) var(--space-3) calc(var(--app-mobile-nav-height) + var(--space-5)) !important; }
+  .protected-banner { align-items: flex-start !important; flex-direction: column; gap: var(--space-3); }
+  .protected-health { grid-template-columns: 1fr !important; }
+  .protected-grid { grid-template-columns: 1fr !important; }
+}

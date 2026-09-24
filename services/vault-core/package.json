@@ -1,0 +1,65 @@
+{
+  "name": "@tkxel-vault/vault-core",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Core storage engine, cryptographic envelope, and Context Hub services for tkxel Vault",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./db": {
+      "types": "./dist/db.d.ts",
+      "default": "./dist/db.js"
+    },
+    "./schema": {
+      "types": "./dist/schema/index.d.ts",
+      "default": "./dist/schema/index.js"
+    },
+    "./search": {
+      "types": "./dist/search/index.d.ts",
+      "default": "./dist/search/index.js"
+    },
+    "./auth": {
+      "types": "./dist/auth/index.d.ts",
+      "default": "./dist/auth/index.js"
+    },
+    "./versions": {
+      "types": "./dist/versions/index.d.ts",
+      "default": "./dist/versions/index.js"
+    },
+    "./crypto": {
+      "types": "./dist/crypto/kms.d.ts",
+      "default": "./dist/crypto/kms.js"
+    },
+    "./markdown": {
+      "types": "./dist/markdown/index.d.ts",
+      "default": "./dist/markdown/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "migrate": "node dist/scripts/migrate.js",
+    "test": "node --test test/**/*.test.js",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@tkxel-vault/types": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "gpt-tokenizer": "^4.0.0",
+    "jszip": "^3.10.1",
+    "pg": "^8.13.3",
+    "yaml": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/pg": "^8.11.11",
+    "drizzle-kit": "^0.30.4",
+    "tsx": "^4.23.13",
+    "typescript": "^5.7.3"
+  }
+}

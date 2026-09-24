@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "tkxel-vault": {
+      "command": "node",
+      "args": [
+        "c:/Users/mubashir.ali/Desktop/Github Pull Request/tkxel-vault-v2/services/mcp-gateway/dist/stdio.js"
+      ],
+      "env": {
+        "DATABASE_URL": "postgres://postgres:postgrespassword@localhost:5432/tkxel_vault"
+      }
+    }
+  }
+}
