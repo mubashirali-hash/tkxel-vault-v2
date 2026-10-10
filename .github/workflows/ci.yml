@@ -257,8 +257,7 @@ jobs:
           cd services/mcp-gateway
           nohup node dist/start.js > gateway.log 2>&1 &
           for i in $(seq 1 30); do curl -sf -o /dev/null http://localhost:3001/health && break; sleep 1; done
-          curl -s -o /dev/null -w 'gateway health: %{http_code}
-' http://localhost:3001/health
+          echo "gateway health: $(curl -s -o /dev/null -w '%{http_code}' http://localhost:3001/health)"
 
       - name: Wait for Keycloak and configure the realm
         run: |
