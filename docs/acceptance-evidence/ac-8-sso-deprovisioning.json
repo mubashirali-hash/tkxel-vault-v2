@@ -2,14 +2,14 @@
   "criterion": "AC-8",
   "name": "Automated SSO Deprovisioning",
   "status": "passed",
-  "executionTimeMs": 121,
-  "deprovisionedUser": "emp_deprovisioned_7d8427ce",
-  "deprovisionDurationMs": 53,
-  "webhookEndpointTested": "http://127.0.0.1:64870/api/sso/deprovision",
+  "executionTimeMs": 118,
+  "deprovisionedUser": "emp_deprovisioned_93d678a5",
+  "deprovisionDurationMs": 22,
+  "webhookEndpointTested": "http://127.0.0.1:63765/api/sso/deprovision",
   "unauthenticatedAttackRejectedCode": 401,
   "forgedSignatureRejectedCode": 401,
   "authenticWebhookStatusCode": 200,
   "subsequentAccessRejectedCode": 401,
   "auditLogged": true,
-  "auditEventId": "847890bc-f2ee-433e-a18b-6c912121eb18"
+  "auditEventId": "13a3c79d-caf6-4f77-9b75-c1b1a26625db"
 }

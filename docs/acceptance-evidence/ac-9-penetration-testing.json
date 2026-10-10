@@ -2,12 +2,13 @@
   "criterion": "AC-9",
   "name": "Penetration Test Verification",
   "status": "passed",
-  "executionTimeMs": 62,
-  "endpointTested": "http://127.0.0.1:64870/mcp",
+  "executionTimeMs": 94,
+  "endpointTested": "http://127.0.0.1:63765/mcp",
   "authorizedTools": [
     "list_skills",
     "run_skill",
-    "ask_vault"
+    "ask_vault",
+    "list_vaults"
   ],
   "forbiddenToolsBlocked": [
     "get_page",

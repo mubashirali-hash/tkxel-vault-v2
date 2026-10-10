@@ -2,10 +2,10 @@
   "criterion": "AC-6",
   "name": "Strict Multi-Tenant Isolation",
   "status": "passed",
-  "executionTimeMs": 78,
-  "testedReader": "reader_7d8427ce@acceptance.test",
-  "unauthorizedAttacker": "unauthorized_7d8427ce@attacker.test",
-  "targetVaultId": "a92cbf1c-e713-4734-98dc-d7d549036270",
+  "executionTimeMs": 148,
+  "testedReader": "reader_93d678a5@acceptance.test",
+  "unauthorizedAttacker": "unauthorized_93d678a5@attacker.test",
+  "targetVaultId": "f2e5a236-1516-4868-8db2-452769001627",
   "attacksEvaluated": [
     {
       "protocol": "MCP HTTP",

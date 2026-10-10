@@ -164,7 +164,8 @@ function startClaudeServer(expectedApiKey) {
         for await (const chunk of req) bodyStr += chunk;
         const body = bodyStr ? JSON.parse(bodyStr) : {};
 
-        if (req.url === '/v1/messages' && req.method === 'POST') {
+        // The Anthropic SDK adds a query string (?beta=true) when a beta feature is requested
+        if (req.url.split('?')[0] === '/v1/messages' && req.method === 'POST') {
           const userMsg = body.messages?.[0]?.content || '';
           let replyText = 'Execution result: proprietary score computed is 428.5';
 
@@ -423,6 +424,7 @@ describe('Epic 7: Production-Path SRS Acceptance Criteria Verification (AC-1 to 
       // 12. Boot MCP Gateway HTTP service on an ephemeral free port
       gatewayServer = createMcpGatewayServer({
         ssoWebhookSecret,
+        oauthValidator: new OAuthValidator('acceptance-gateway-hmac-secret-32b-len!'),
         vaultStore: new PostgresOpenVaultStore(),
         accessResolver: async (userId) => {
           const accessible = await getUserAccessibleVaults(userId);

@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
   "status": "in-remediation",
-  "commit": "2c486ffd181938bf71016b3c31be569a1ef7a422",
+  "commit": "342221bebb3b8eced6aeb131302aa9a2ba4ba033",
   "environment": {
     "host": "win32-x64-node-v24.18.0",
     "container": "Linux x86_64 gVisor runsc (WSL2/Docker)",
     "database": "PostgreSQL 16 with pgvector (Docker)",
     "cache": "Redis 7 (Docker)"
   },
-  "generatedAt": "2026-09-21T03:14:50.626Z",
+  "generatedAt": "2026-10-10T02:23:12.349Z",
   "criteria": [
     {
       "id": "AC-1",

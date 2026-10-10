@@ -2,10 +2,10 @@
   "criterion": "AC-10",
   "name": "Zero-Plaintext Storage Audit & Dual Export Validation",
   "status": "passed",
-  "executionTimeMs": 156,
+  "executionTimeMs": 560,
   "canariesAudited": [
-    "CANARY_OPEN_7d8427ce_TOPSECRET",
-    "CANARY_LOCKED_7d8427ce_PROPRIETARY"
+    "CANARY_OPEN_93d678a5_TOPSECRET",
+    "CANARY_LOCKED_93d678a5_PROPRIETARY"
   ],
   "databaseCiphertextVerified": "Zero plaintext found across versions and chunks tables",
   "openVaultExportSucceeded": true,

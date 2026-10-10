@@ -2,8 +2,8 @@
   "criterion": "AC-2",
   "name": "Link Refactoring Integrity",
   "status": "passed",
-  "executionTimeMs": 170,
-  "refactoredLinkSource": "70962a49-c017-48cc-a104-1882172ae956",
+  "executionTimeMs": 564,
+  "refactoredLinkSource": "d00d6a0c-f3e8-49b0-ab65-537a71206bb2",
   "targetRefactored": "Modern Modular Architecture",
   "linkConstraintVerified": "links_resolved_has_target CHECK constraint satisfied"
 }
