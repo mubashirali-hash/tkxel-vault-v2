@@ -12,9 +12,6 @@ export * from './getContext.js';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-/** Above this many candidate pages the index-backed narrowing is skipped in favour of the full scan. */
-const MAX_CANDIDATE_PAGES = 500;
-
 export interface SearchPagesOptions {
   mode?: 'hybrid' | 'lexical' | 'semantic';
   provider?: EmbeddingProvider;
@@ -26,12 +23,10 @@ export interface SearchPagesOptions {
   updatedFrom?: Date;
   updatedTo?: Date;
   /**
-   * Narrow keyword search to candidate pages found through the GIN indexes of migration 0009 before
-   * ranking. Results are identical either way. Off unless set here or with SEARCH_CANDIDATE_INDEX=1:
-   * it is several times faster for specific queries measured alone, but showed no reliable gain under
-   * concurrent load in local tests and can be slower while table statistics are stale.
+   * Reference implementation: match by scanning every page of the vault, as before migration 0010.
+   * Results are identical to the indexed query; this exists so tests can prove that.
    */
-  candidateIndex?: boolean;
+  legacyScan?: boolean;
 }
 
 export interface PageSearchResult {
@@ -94,63 +89,26 @@ export async function searchPages(
     pageFilters.push(sql`p.updated_at <= ${options.updatedTo.toISOString()}::timestamptz`);
   }
   const pageFilter = sql.join(pageFilters, sql` AND `);
+  // A page can hold index entries for its published version and for a newer draft. Readers and the
+  // retrieval tools search the published text only (FR-43); Owners and Editors search the newest.
+  // Index entries exist for at most two versions of a page: the published one and one newer draft.
+  // So "newest" means: the draft's entries, or the published entries when there is no draft.
+  const visible = (alias: string) => {
+    const versionId = sql.raw(`${alias}.version_id`);
+    return options?.publishedOnly
+      ? sql`${versionId} = p.current_version_id`
+      : sql`(${versionId} IS DISTINCT FROM p.current_version_id
+             OR NOT EXISTS (SELECT 1 FROM ${chunks} d WHERE d.page_id = p.id AND d.version_id IS DISTINCT FROM p.current_version_id))`;
+  };
   const searchMode = options?.mode ?? 'hybrid';
   const engine = new HybridSearchEngine(60);
 
   // 2. Lexical search (PostgreSQL Full-Text cover-density ranking via ts_rank_cd)
   let lexicalResults: SearchResultItem[] = [];
   if (searchMode === 'hybrid' || searchMode === 'lexical') {
-    // 2a. Candidate pages through GIN indexes. A row can only satisfy the query below if at least one of
-    // the query's words occurs in its chunk, its title or its tags, so "any word matches" is a safe
-    // superset that the indexes can answer. The exact match and the ranking are still done by the query
-    // below, unchanged; this only limits which pages it has to look at.
-    let candidateFilter = sql``;
-    let noCandidates = false;
-    if (options?.candidateIndex ?? process.env.SEARCH_CANDIDATE_INDEX === '1') {
-      const probe: any = await db.execute(sql`
-        SELECT querytree(websearch_to_tsquery('english', ${cleanQuery})) AS tree,
-               tsvector_to_array(to_tsvector('english', ${cleanQuery})) AS lexemes
-      `);
-      const tree: string = probe.rows?.[0]?.tree ?? '';
-      const lexemes: string[] = probe.rows?.[0]?.lexemes ?? [];
-      // 'T' or empty means the query has no indexable positive term (stop words only, or pure negation):
-      // those keep the full scan. So does any word that would need escaping inside a tsquery literal.
-      const indexable = tree !== '' && tree !== 'T' && lexemes.length > 0 && lexemes.every((l) => !/['\\]/.test(l));
-      if (indexable) {
-        const anyWord = lexemes.map((l) => `'${l}'`).join(' | ');
-        // The lookup runs on its own with sequential scans disabled, so it uses the indexes even when
-        // table statistics are stale (for example straight after a bulk import). It stops one row past
-        // the cap: a query whose words occur in a large share of pages gains nothing from narrowing,
-        // so it falls through to the full scan with no extra work.
-        const candidateRows: any = await db.transaction(async (tx) => {
-          await tx.execute(sql`SET LOCAL enable_seqscan = off`);
-          return tx.execute(sql`
-            SELECT page_id FROM (
-              SELECT c2.page_id FROM ${chunks} c2
-              JOIN ${pages} pc ON pc.id = c2.page_id AND pc.vault_id = ${vaultId}::uuid
-              WHERE c2.tsv_content @@ ${anyWord}::tsquery
-              UNION
-              SELECT p2.id FROM ${pages} p2
-              WHERE p2.vault_id = ${vaultId}::uuid
-                AND (to_tsvector('english', p2.title) @@ ${anyWord}::tsquery OR vault_tags_tsv(p2.tags) @@ ${anyWord}::tsquery)
-            ) candidates
-            LIMIT ${MAX_CANDIDATE_PAGES + 1}
-          `);
-        });
-        const candidateIds: string[] = (candidateRows.rows || []).map((r: any) => r.page_id);
-        if (candidateIds.length === 0) {
-          noCandidates = true;
-        } else if (candidateIds.length <= MAX_CANDIDATE_PAGES) {
-          candidateFilter = sql`
-        AND p.id = ANY(${`{${candidateIds.join(',')}}`}::uuid[])`;
-        }
-      }
-    }
-
-    // No page contains any of the query's words: nothing can match, so the ranking query is skipped
-    const lexicalRows: any = noCandidates ? { rows: [] } : await db.execute(sql`
-      SELECT p.id as page_id, p.title, p.type, p.tags, c.id as chunk_id, c.position as chunk_position,
-             (
+    const titleLike = '%' + cleanQuery + '%';
+    // Relevance: cover density of the chunk text, plus fixed bonuses for a title or tag hit
+    const rankScore = sql`(
                COALESCE(
                  CASE WHEN q.query_parsed::text != '' AND c.tsv_content IS NOT NULL
                       THEN ts_rank_cd(c.tsv_content, q.query_parsed)
@@ -158,25 +116,75 @@ export async function searchPages(
                  0.0
                ) +
                CASE WHEN (q.query_parsed::text != '' AND to_tsvector('english', p.title) @@ q.query_parsed)
-                         OR p.title ILIKE ${'%' + cleanQuery + '%'}
+                         OR p.title ILIKE ${titleLike}
                     THEN 0.50 ELSE 0.0 END +
                CASE WHEN p.tags IS NOT NULL AND (
                          (q.query_parsed::text != '' AND to_tsvector('english', array_to_string(p.tags, ' ')) @@ q.query_parsed)
-                         OR array_to_string(p.tags, ' ') ILIKE ${'%' + cleanQuery + '%'}
+                         OR array_to_string(p.tags, ' ') ILIKE ${titleLike}
                     )
                     THEN 0.20 ELSE 0.0 END
-             ) as rank_score
+             )`;
+
+    // A query made only of stop words parses to nothing and is answered by title/tag substring match.
+    // That path has no indexable term, so it keeps the scan.
+    const parsed: any = await db.execute(sql`SELECT websearch_to_tsquery('english', ${cleanQuery})::text AS parsed`);
+    const hasTerms = (parsed.rows?.[0]?.parsed ?? '') !== '';
+
+    const lexicalRows: any = hasTerms && !options?.legacyScan
+      // Indexed: `search_tsv` holds title || tags || chunk text for each chunk and `meta_tsv` holds
+      // title || tags for each page (migration 0010), so both arms are GIN index lookups. The second
+      // arm covers pages that have no chunks, which the scan reached through its LEFT JOIN.
+      ? await db.execute(sql`
+      SELECT m.page_id, m.title, m.type, m.tags, m.chunk_id, m.chunk_position, m.rank_score
+      FROM (
+        SELECT p.id as page_id, p.title, p.type, p.tags, c.id as chunk_id, c.position as chunk_position,
+               ${rankScore} as rank_score
+        FROM (
+          -- OFFSET 0 keeps this as its own step, so the GIN index lookup always runs first and the
+          -- vault and version checks are applied to the matches only
+          SELECT c1.id, c1.page_id, c1.version_id, c1.position, c1.tsv_content
+          FROM ${chunks} c1
+          WHERE c1.search_tsv @@ websearch_to_tsquery('english', ${cleanQuery})
+          OFFSET 0
+        ) c
+        JOIN ${pages} p ON p.id = c.page_id
+        CROSS JOIN (SELECT websearch_to_tsquery('english', ${cleanQuery}) as query_parsed) q
+        WHERE ${pageFilter}
+          AND ${visible('c')}
+        UNION ALL
+        SELECT p.id as page_id, p.title, p.type, p.tags, NULL::uuid as chunk_id, NULL::integer as chunk_position,
+               ${sql`(
+               CASE WHEN to_tsvector('english', p.title) @@ q.query_parsed OR p.title ILIKE ${titleLike}
+                    THEN 0.50 ELSE 0.0 END +
+               CASE WHEN p.tags IS NOT NULL AND (
+                         to_tsvector('english', array_to_string(p.tags, ' ')) @@ q.query_parsed
+                         OR array_to_string(p.tags, ' ') ILIKE ${titleLike}
+                    )
+                    THEN 0.20 ELSE 0.0 END
+             )`} as rank_score
+        FROM ${pages} p
+        CROSS JOIN (SELECT websearch_to_tsquery('english', ${cleanQuery}) as query_parsed) q
+        WHERE ${pageFilter}
+          AND p.meta_tsv @@ websearch_to_tsquery('english', ${cleanQuery})
+          AND NOT EXISTS (SELECT 1 FROM ${chunks} c0 WHERE c0.page_id = p.id AND ${visible('c0')})
+      ) m
+      ORDER BY m.rank_score DESC, m.page_id ASC, COALESCE(m.chunk_position, 0) ASC, COALESCE(m.chunk_id, '00000000-0000-0000-0000-000000000000'::uuid) ASC
+      LIMIT 25
+    `)
+      : await db.execute(sql`
+      SELECT p.id as page_id, p.title, p.type, p.tags, c.id as chunk_id, c.position as chunk_position,
+             ${rankScore} as rank_score
       FROM ${pages} p
-      LEFT JOIN ${chunks} c ON c.page_id = p.id
+      LEFT JOIN ${chunks} c ON c.page_id = p.id AND ${visible('c')}
       CROSS JOIN (SELECT websearch_to_tsquery('english', ${cleanQuery}) as query_parsed) q
-      WHERE ${pageFilter}${candidateFilter}
+      WHERE ${pageFilter}
         AND (
           CASE
             WHEN q.query_parsed::text != '' THEN
               (to_tsvector('english', p.title) || COALESCE(to_tsvector('english', array_to_string(p.tags, ' ')), ''::tsvector) || COALESCE(c.tsv_content, ''::tsvector)) @@ q.query_parsed
             ELSE
-              p.title ILIKE ${'%' + cleanQuery + '%'}
-              OR (p.tags IS NOT NULL AND array_to_string(p.tags, ' ') ILIKE ${'%' + cleanQuery + '%'})
+              p.title ILIKE ${titleLike}
+              OR (p.tags IS NOT NULL AND array_to_string(p.tags, ' ') ILIKE ${titleLike})
           END
         )
       ORDER BY rank_score DESC, p.id ASC, COALESCE(c.position, 0) ASC, COALESCE(c.id, '00000000-0000-0000-0000-000000000000'::uuid) ASC
@@ -214,7 +222,7 @@ export async function searchPages(
                1 - (c.embedding <=> ${vectorLiteral}::vector) as similarity
         FROM ${pages} p
         JOIN ${chunks} c ON c.page_id = p.id
-        WHERE ${pageFilter} AND c.embedding IS NOT NULL
+        WHERE ${pageFilter} AND c.embedding IS NOT NULL AND ${visible('c')}
         ORDER BY c.embedding <=> ${vectorLiteral}::vector ASC, p.id ASC, COALESCE(c.position, 0) ASC, c.id ASC
         LIMIT 25
       `);

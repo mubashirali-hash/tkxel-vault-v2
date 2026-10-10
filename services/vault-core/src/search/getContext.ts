@@ -1,4 +1,4 @@
-import { sql, eq, inArray, and, desc } from 'drizzle-orm';
+import { sql, eq, inArray, and } from 'drizzle-orm';
 import { db } from '../db.js';
 import { chunks, pages, links, vaults, versions } from '../schema/index.js';
 import { HybridSearchEngine, SearchResultItem } from './hybrid.js';
@@ -31,9 +31,12 @@ export class ContextAssembler {
     }
 
     let targetContent = 'Content not available for plain text retrieval.';
-    const targetChunks = await db.select().from(chunks)
-      .where(eq(chunks.page_id, pageId))
-      .orderBy(chunks.position);
+    // Published text only: a newer draft's index entries must not surface here (FR-43)
+    const targetChunks = targetPageRes.current_version_id
+      ? await db.select().from(chunks)
+          .where(and(eq(chunks.page_id, pageId), eq(chunks.version_id, targetPageRes.current_version_id)))
+          .orderBy(chunks.position)
+      : [];
 
     if (targetChunks.length > 0) {
       const decryptedParts = targetChunks.map(c => 
@@ -41,10 +44,9 @@ export class ContextAssembler {
       );
       targetContent = decryptedParts.join('\n\n');
     } else {
-      const [latestVer] = await db.select().from(versions)
-        .where(eq(versions.page_id, pageId))
-        .orderBy(desc(versions.number))
-        .limit(1);
+      const [latestVer] = targetPageRes.current_version_id
+        ? await db.select().from(versions).where(eq(versions.id, targetPageRes.current_version_id)).limit(1)
+        : [];
       if (latestVer && latestVer.encrypted_blob) {
         targetContent = EnvelopeEncryption.decryptToString(latestVer.encrypted_blob, dek);
       }
@@ -73,7 +75,7 @@ export class ContextAssembler {
       });
       for (const p of outPages) {
         const pChunks = await db.query.chunks.findMany({
-          where: eq(chunks.page_id, p.id),
+          where: and(eq(chunks.page_id, p.id), sql`${chunks.version_id} = (SELECT current_version_id FROM pages WHERE id = ${p.id})`),
           orderBy: (c: any, { asc }: any) => [asc(c.position)],
           limit: 2
         });
@@ -98,7 +100,7 @@ export class ContextAssembler {
       });
       for (const p of inPages) {
         const pChunks = await db.query.chunks.findMany({
-          where: eq(chunks.page_id, p.id),
+          where: and(eq(chunks.page_id, p.id), sql`${chunks.version_id} = (SELECT current_version_id FROM pages WHERE id = ${p.id})`),
           orderBy: (c: any, { asc }: any) => [asc(c.position)],
           limit: 2
         });

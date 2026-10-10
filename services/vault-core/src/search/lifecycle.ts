@@ -88,7 +88,9 @@ export async function reindexPage(
         };
       }
 
-      // 4. Retrieve latest published or draft version for open vault
+      // 4. Versions to index: the newest one (what Owners and Editors search) and, when it is a
+      // different one, the published version (what Readers and the retrieval tools search)
+      const page = await lockPageForMutation(tx, pageId, { expectedVaultId: vaultId });
       const versionRows = await tx.select()
         .from(versions)
         .where(eq(versions.page_id, pageId))
@@ -104,16 +106,33 @@ export async function reindexPage(
         };
       }
 
-      const targetVersion = versionRows[0];
+      const targetVersions = [versionRows[0]];
+      if (page.current_version_id && page.current_version_id !== versionRows[0].id) {
+        const publishedRows = await tx.select().from(versions).where(eq(versions.id, page.current_version_id)).limit(1);
+        if (publishedRows[0]?.encrypted_blob) targetVersions.push(publishedRows[0]);
+      }
+
       const kms = createKmsProvider();
       dek = await kms.unwrapKey(vault.data_key_id);
-
-      const plaintext = EnvelopeEncryption.decryptToString(targetVersion.encrypted_blob, dek);
       const chunker = new MarkdownChunker({ maxTokensPerChunk: 400, overlapTokens: 50 });
-      const docChunks = chunker.chunk(plaintext);
 
-      if (docChunks.length === 0) {
-        await tx.delete(chunks).where(eq(chunks.page_id, pageId));
+      // 5. Chunk and embed everything before any row changes, inside the lock boundary
+      const provider = options?.provider ?? getEmbeddingProvider();
+      const prepared: Array<{ versionId: string; docChunks: ReturnType<MarkdownChunker['chunk']>; embeddings: number[][] }> = [];
+      for (const version of targetVersions) {
+        const plaintext = EnvelopeEncryption.decryptToString(version.encrypted_blob, dek);
+        const versionChunks = chunker.chunk(plaintext);
+        if (versionChunks.length === 0) continue;
+        const embeddings = await provider.generateEmbeddings(versionChunks.map((c) => c.content));
+        validateEmbeddingBatch(embeddings, versionChunks.length);
+        prepared.push({ versionId: version.id, docChunks: versionChunks, embeddings });
+      }
+
+      // 6. Atomically replace the page's index entries
+      await tx.delete(chunks).where(eq(chunks.page_id, pageId));
+
+      const docChunks = prepared.find((entry) => entry.versionId === versionRows[0].id)?.docChunks ?? [];
+      if (docChunks.length === 0 && prepared.length === 0) {
         return {
           pageId,
           chunkCount: 0,
@@ -121,28 +140,18 @@ export async function reindexPage(
         };
       }
 
-      // 5. Generate and validate all embeddings inside lock boundary
-      const provider = options?.provider ?? getEmbeddingProvider();
-      const texts = docChunks.map((c) => c.content);
-      const embeddings = await provider.generateEmbeddings(texts);
-      validateEmbeddingBatch(embeddings, docChunks.length);
-
-      // 6. Atomically replace chunks with new embeddings and encrypted text
-      await tx.delete(chunks).where(eq(chunks.page_id, pageId));
-
-      for (let i = 0; i < docChunks.length; i++) {
-        const c = docChunks[i];
-        const emb = embeddings[i];
-        const encChunk = EnvelopeEncryption.encrypt(c.content, dek!);
-
-        await tx.insert(chunks).values({
-          page_id: pageId,
-          version_id: targetVersion.id,
-          position: c.chunkIndex,
-          encrypted_text: encChunk,
-          tsv_content: sql`to_tsvector('english', ${c.content})`,
-          embedding: emb,
-        });
+      for (const entry of prepared) {
+        for (let i = 0; i < entry.docChunks.length; i++) {
+          const c = entry.docChunks[i];
+          await tx.insert(chunks).values({
+            page_id: pageId,
+            version_id: entry.versionId,
+            position: c.chunkIndex,
+            encrypted_text: EnvelopeEncryption.encrypt(c.content, dek!),
+            tsv_content: sql`to_tsvector('english', ${c.content})`,
+            embedding: entry.embeddings[i],
+          });
+        }
       }
 
       return {

@@ -32,13 +32,17 @@ COPY --from=builder /app /app
 FROM runtime-base AS migration
 CMD ["pnpm", "run", "--filter", "@tkxel-vault/vault-core", "migrate"]
 
+# Long-running services run as the unprivileged vault user and start node directly, so signals reach
+# the process and nothing needs a writable home directory.
 FROM runtime-base AS api-server
 EXPOSE 3002
-CMD ["pnpm", "run", "--filter", "@tkxel-vault/api-server", "start"]
+USER 10001:10001
+CMD ["node", "apps/api-server/dist/server.js"]
 
 FROM runtime-base AS mcp-gateway
 EXPOSE 3001
-CMD ["pnpm", "run", "--filter", "@tkxel-vault/mcp-gateway", "start"]
+USER 10001:10001
+CMD ["node", "services/mcp-gateway/dist/start.js"]
 
 FROM runtime-base AS skill-runner
 EXPOSE 3003

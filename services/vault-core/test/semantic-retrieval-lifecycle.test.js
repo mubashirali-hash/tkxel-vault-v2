@@ -443,14 +443,33 @@ test('Epic 5 Chunk 5.3 & 5.4: Semantic Retrieval, Hybrid RAG, and Lifecycle Sema
 
       assert.ok(updatedChunks.length > 0);
 
-      // Search for old keywords -> must not match
-      const oldSearch = await db.execute(sql`
+      // Contract changed 2026-10-10 (bug_report.md 15.4, FR-43): this page is published, so its
+      // published version stays indexed for Readers while the draft is edited. Old lexemes must
+      // not survive anywhere else: not in the draft's entries, not in what an Editor's search sees,
+      // and not at all once the draft is published.
+      const [pageRow] = await db.select().from(schema.pages).where(eq(schema.pages.id, pageSemanticId));
+      assert.ok(pageRow.current_version_id, 'the page under test is published');
+      const oldLexemeCount = async (extra) => (await db.execute(sql`
         SELECT count(*)::int as count
         FROM ${schema.chunks}
         WHERE page_id = ${pageSemanticId}::uuid
-          AND tsv_content @@ plainto_tsquery('lubrication')
-      `);
-      assert.equal(oldSearch.rows[0].count, 0, 'Old lexemes must be purged on update');
+          AND tsv_content @@ plainto_tsquery('lubrication') ${extra}
+      `)).rows[0].count;
+
+      assert.equal(await oldLexemeCount(sql`AND version_id <> ${pageRow.current_version_id}::uuid`), 0, 'Old lexemes must be purged from the draft index on update');
+      const versionIds = new Set(updatedChunks.map((c) => c.version_id));
+      assert.ok(versionIds.size <= 2, 'at most the published version and one draft are indexed');
+      const editorHits = await searchPages(vaultId, 'lubrication', 10, { mode: 'lexical' });
+      assert.ok(!editorHits.some((r) => r.id === pageSemanticId), 'an Editor search follows the draft, not the old text');
+      const readerHits = await searchPages(vaultId, 'lubrication', 10, { mode: 'lexical', publishedOnly: true });
+      assert.ok(readerHits.some((r) => r.id === pageSemanticId), 'a Reader search still finds the published text');
+      const readerDraftHits = await searchPages(vaultId, 'Triton', 10, { mode: 'lexical', publishedOnly: true });
+      assert.ok(!readerDraftHits.some((r) => r.id === pageSemanticId), 'a Reader search never matches draft text');
+
+      await publishVersion(pageSemanticId, ownerId, controlledProvider);
+      assert.equal(await oldLexemeCount(sql``), 0, 'Old lexemes must be purged entirely on publish');
+      const afterPublish = await searchPages(vaultId, 'Triton', 10, { mode: 'lexical', publishedOnly: true });
+      assert.ok(afterPublish.some((r) => r.id === pageSemanticId), 'the newly published text is searchable by Readers');
     });
   } finally {
     if (originalNodeEnv !== undefined) process.env.NODE_ENV = originalNodeEnv;

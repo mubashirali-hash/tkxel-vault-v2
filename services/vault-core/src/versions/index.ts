@@ -144,8 +144,12 @@ export async function saveDraft(
         draftId = inserted[0].id;
       }
 
-      // 9. Purge old chunks for this page
-      await tx.delete(chunks).where(eq(chunks.page_id, pageId));
+      // 9. Replace the draft's index entries. The published version's entries stay: Readers and the
+      // retrieval tools keep finding the page by its published text until the draft is published (FR-43).
+      await tx.delete(chunks).where(and(
+        eq(chunks.page_id, pageId),
+        sql`${chunks.version_id} IS DISTINCT FROM ${lockedPage.current_version_id}`
+      ));
 
       // 10. Insert new chunks only for open vaults
       if (vault.mode === 'open' && preparedChunks.length > 0) {
@@ -287,8 +291,10 @@ export async function publishVersion(pageId: string, authorId: string, provider?
       // 8. Chunks alignment
       if (vault.mode === 'locked') {
         await tx.delete(chunks).where(eq(chunks.page_id, pageId));
-      } else if (preparedChunks.length > 0) {
-        await tx.delete(chunks).where(eq(chunks.page_id, pageId));
+      } else {
+        // The version just published becomes the only indexed one: entries of the version it
+        // replaces are removed, and its own are written now unless the draft save already did
+        await tx.delete(chunks).where(and(eq(chunks.page_id, pageId), sql`${chunks.version_id} <> ${draftId}`));
         for (const pc of preparedChunks) {
           await tx.insert(chunks).values({
             page_id: pageId,

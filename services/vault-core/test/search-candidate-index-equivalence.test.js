@@ -8,11 +8,11 @@ import { searchPages } from '../dist/search/index.js';
 import { runMigrations } from '../dist/schema/migrator.js';
 
 /**
- * The index-backed candidate step (migration 0009) must never change what keyword search returns.
- * Every query here is run twice, with and without the candidate step, and the two results must be
- * identical: same pages, same order, same scores.
+ * The indexed keyword query (migration 0010) must never change what keyword search returns.
+ * Every query here is run twice, through the indexed query and through the reference scan, and the
+ * two results must be identical: same pages, same order, same scores.
  */
-test('Keyword search returns identical results with and without the index-backed candidate step', async () => {
+test('Keyword search returns identical results through the index and through the reference scan', async () => {
   await runMigrations(db);
 
   const vaultId = crypto.randomUUID();
@@ -85,8 +85,8 @@ test('Keyword search returns identical results with and without the index-backed
 
     for (const query of queries) {
       for (const extra of [{}, { types: ['note'], tags: ['security'] }, { publishedOnly: true }]) {
-        const indexed = await searchPages(vaultId, query, 10, { mode: 'lexical', candidateIndex: true, ...extra });
-        const scanned = await searchPages(vaultId, query, 10, { mode: 'lexical', candidateIndex: false, ...extra });
+        const indexed = await searchPages(vaultId, query, 10, { mode: 'lexical', legacyScan: false, ...extra });
+        const scanned = await searchPages(vaultId, query, 10, { mode: 'lexical', legacyScan: true, ...extra });
         assert.deepEqual(indexed, scanned, `results differ for query "${query}" with options ${JSON.stringify(extra)}`);
         assert.ok(indexed.every((r) => vaultPageIds.has(r.id)), `query "${query}" returned a page from another vault`);
         if (indexed.length > 0) nonEmpty++;
@@ -95,10 +95,27 @@ test('Keyword search returns identical results with and without the index-backed
 
     // Guard against a vacuous pass: the sample must actually exercise matches and the known hard cases
     assert.ok(nonEmpty >= 30, `only ${nonEmpty} query/option combinations returned results`);
-    assert.ok((await searchPages(vaultId, 'payment architecture', 10, { mode: 'lexical', candidateIndex: true })).length >= 2);
-    assert.ok((await searchPages(vaultId, '-payment', 10, { mode: 'lexical', candidateIndex: true })).length > 0, 'pure negation still works through the fallback');
-    assert.equal((await searchPages(vaultId, '"proposal commercial"', 10, { mode: 'lexical', candidateIndex: true })).length, 0);
-    assert.ok((await searchPages(vaultId, 'Untitled', 10, { mode: 'lexical', candidateIndex: true })).some((r) => r.title === 'Untitled Draft'));
+    assert.ok((await searchPages(vaultId, 'payment architecture', 10, { mode: 'lexical', legacyScan: false })).length >= 2);
+    assert.ok((await searchPages(vaultId, '-payment', 10, { mode: 'lexical', legacyScan: false })).length > 0, 'pure negation still works through the fallback');
+    assert.equal((await searchPages(vaultId, '"proposal commercial"', 10, { mode: 'lexical', legacyScan: false })).length, 0);
+    assert.ok((await searchPages(vaultId, 'Untitled', 10, { mode: 'lexical', legacyScan: false })).some((r) => r.title === 'Untitled Draft'));
+
+    // The stored search vector must follow a rename and a tag change (database trigger), for pages
+    // with and without chunks
+    const [withChunks] = await db.select().from(schema.pages).where(sql`${schema.pages.vault_id} = ${vaultId}::uuid AND ${schema.pages.title} = 'Acme Corp'`);
+    const [withoutChunks] = await db.select().from(schema.pages).where(sql`${schema.pages.vault_id} = ${vaultId}::uuid AND ${schema.pages.title} = 'Untitled Draft'`);
+    await db.update(schema.pages).set({ title: 'Globex Holdings', tags: ['partner', 'renewal'] }).where(eq(schema.pages.id, withChunks.id));
+    await db.update(schema.pages).set({ title: 'Quarterly Zebra Report', tags: ['zebra'] }).where(eq(schema.pages.id, withoutChunks.id));
+    for (const query of ['Globex', 'Acme', 'renewal', 'enterprise', 'zebra', 'Untitled', 'quarterly report', 'commercial proposal']) {
+      const indexed = await searchPages(vaultId, query, 10, { mode: 'lexical', legacyScan: false });
+      const scanned = await searchPages(vaultId, query, 10, { mode: 'lexical', legacyScan: true });
+      assert.deepEqual(indexed, scanned, `results differ after rename for query "${query}"`);
+    }
+    const titles = async (query) => (await searchPages(vaultId, query, 10, { mode: 'lexical' })).map((r) => r.title);
+    assert.deepEqual(await titles('Globex'), ['Globex Holdings']);
+    assert.deepEqual(await titles('Acme'), [], 'the old title no longer matches');
+    assert.deepEqual(await titles('zebra'), ['Quarterly Zebra Report']);
+    assert.ok((await titles('commercial proposal')).includes('Globex Holdings'), 'chunk text still matches after the rename');
   } finally {
     await db.delete(schema.vaults).where(eq(schema.vaults.id, vaultId));
     await db.delete(schema.vaults).where(eq(schema.vaults.id, otherVaultId));

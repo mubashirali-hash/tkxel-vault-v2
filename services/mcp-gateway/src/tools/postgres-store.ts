@@ -97,31 +97,30 @@ export class PostgresOpenVaultStore implements OpenVaultStore {
 
     // Retrieval tools only ever serve the latest published snapshot (FR-43).
     // A page with no published version is indistinguishable from a missing page.
-    const pageContentRec = await getPageContent(page.id, undefined, { publishedOnly: true });
-    if (!pageContentRec) return null;
-
-    // Fetch backlinks strictly originating from pages within the same vault
+    // The four reads are independent, so they run concurrently.
     const fromPages = alias(schema.pages, 'from_pages');
-    const incomingLinks = await db
-      .select({
-        from_title: fromPages.title,
-      })
-      .from(schema.links)
-      .innerJoin(fromPages, and(eq(schema.links.from_page_id, fromPages.id), eq(fromPages.vault_id, vaultId)))
-      .where(and(eq(schema.links.to_page_id, page.id), eq(schema.links.resolved, true)));
+    const [pageContentRec, incomingLinks, outgoing, timelineRows] = await Promise.all([
+      getPageContent(page.id, undefined, { publishedOnly: true }),
+      // Backlinks strictly originating from pages within the same vault
+      db
+        .select({ from_title: fromPages.title })
+        .from(schema.links)
+        .innerJoin(fromPages, and(eq(schema.links.from_page_id, fromPages.id), eq(fromPages.vault_id, vaultId)))
+        .where(and(eq(schema.links.to_page_id, page.id), eq(schema.links.resolved, true))),
+      db
+        .select({ raw_target: schema.links.raw_target })
+        .from(schema.links)
+        .where(eq(schema.links.from_page_id, page.id)),
+      listTimelineEntries(vaultId, page.id),
+    ]);
+    if (!pageContentRec) return null;
 
     const backlinkTitles = incomingLinks
       .map((l) => l.from_title)
       .filter((t): t is string => Boolean(t));
 
     const body = pageContentRec.content || `# ${page.title}`;
-
-    const outgoing = await db
-      .select({ raw_target: schema.links.raw_target })
-      .from(schema.links)
-      .where(eq(schema.links.from_page_id, page.id));
-
-    const timeline = (await listTimelineEntries(vaultId, page.id)).map((e) => ({ date: e.date, entry: e.entry_text }));
+    const timeline = timelineRows.map((e) => ({ date: e.date, entry: e.entry_text }));
 
     const { body: _legacyBody, ...frontMatter } = (page.front_matter as Record<string, unknown>) || {};
 

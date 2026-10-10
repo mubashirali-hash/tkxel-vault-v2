@@ -10,7 +10,6 @@
  * Environment:
  *   LOAD_PAGES (10000)  LOAD_USERS (200)  LOAD_REQUESTS_PER_USER (5)
  *   LOAD_THINK_MS (0)   Pause between one user's requests. 0 = every user fires continuously (worst case).
- *   SEARCH_CANDIDATE_INDEX=1  Measure the opt-in index-backed keyword search instead of the default.
  *   LOAD_CORPUS (repeated)  'repeated' = 10 documents repeated, so every query matches at least 10% of the
  *                           vault (worst case for search). 'varied' = every page has its own words, and half
  *                           the queries are specific and half broad.
@@ -20,6 +19,7 @@
  */
 import crypto from 'node:crypto';
 import http from 'node:http';
+import { Worker } from 'node:worker_threads';
 import { db, pool } from '@tkxel-vault/vault-core/db';
 import * as schema from '@tkxel-vault/vault-core/schema';
 import { MockKmsProvider, EnvelopeEncryption } from '@tkxel-vault/vault-core';
@@ -160,24 +160,16 @@ try {
   await callTool(port, tokens[0], 'search', { query: queries[0], vault_id: vaultId });
   await callTool(port, tokens[0], 'get_page', { page_id: pageIds[0], vault_id: vaultId });
 
-  const samples = { search: [], get_page: [] };
-  let failures = 0;
+  // The virtual users run in a worker thread, so generating load does not compete with the gateway
+  // for its event loop (a deployed gateway does not share a process with its clients)
   const wallStart = performance.now();
-  await Promise.all(
-    tokens.map(async (token, u) => {
-      // Stagger arrivals so users with think time do not all fire on the same tick
-      if (THINK_MS > 0) await new Promise((resolve) => setTimeout(resolve, Math.random() * THINK_MS));
-      for (let r = 0; r < REQUESTS_PER_USER; r++) {
-        if (THINK_MS > 0 && r > 0) await new Promise((resolve) => setTimeout(resolve, THINK_MS));
-        const useSearch = (u + r) % 10 < 6; // 60% search, 40% get_page
-        const result = useSearch
-          ? await callTool(port, token, 'search', { query: queryFor(u * 31 + r), vault_id: vaultId, limit: 10 })
-          : await callTool(port, token, 'get_page', { page_id: pageIds[(u * 97 + r * 13) % pageIds.length], vault_id: vaultId });
-        if (!result.ok) failures++;
-        samples[useSearch ? 'search' : 'get_page'].push(result.ms);
-      }
-    })
-  );
+  const { samples, failures } = await new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('./load-driver.mjs', import.meta.url), {
+      workerData: { port, tokens, pageIds, vaultId, USERS, REQUESTS_PER_USER, THINK_MS, VARIED, PAGES, queries, topics },
+    });
+    worker.once('message', resolve);
+    worker.once('error', reject);
+  });
   const wallSeconds = (performance.now() - wallStart) / 1000;
   const total = samples.search.length + samples.get_page.length;
 

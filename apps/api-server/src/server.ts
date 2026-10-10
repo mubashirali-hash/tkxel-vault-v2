@@ -1684,7 +1684,14 @@ app.post('/api/vaults/:vaultId/import', requireRole(['owner', 'editor'], 'write_
                 const chunker = new MarkdownChunker({ maxTokensPerChunk: 400, overlapTokens: 50 });
                 const docChunks = chunker.chunk(rawContent);
                 if (docChunks.length > 0) {
-                  await tx.delete(schema.chunks).where(eq(schema.chunks.page_id, pageId));
+                  // A draft import leaves the published version's index entries in place (FR-43);
+                  // a published import replaces everything
+                  await tx.delete(schema.chunks).where(importStatus === 'published'
+                    ? eq(schema.chunks.page_id, pageId)
+                    : and(
+                        eq(schema.chunks.page_id, pageId),
+                        sql`${schema.chunks.version_id} IS DISTINCT FROM (SELECT current_version_id FROM pages WHERE id = ${pageId}::uuid)`
+                      ));
                   for (const c of docChunks) {
                     await tx.insert(schema.chunks).values({
                       page_id: pageId,
