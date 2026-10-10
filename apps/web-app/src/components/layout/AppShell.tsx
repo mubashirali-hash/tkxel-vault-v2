@@ -30,6 +30,8 @@ export interface AppShellProps {
   onOpenImportModal: () => void;
   /** Rebuilds the vault's search index on the server (Owners only, FR-24). */
   onReindexVault?: () => void;
+  /** Rate limits, key rotation, emergency access and vault destruction. */
+  onOpenVaultSettings?: () => void;
   onOpenMcpModal?: () => void;
   onOpenCreateVault?: () => void;
   onLogout?: () => void;
@@ -40,7 +42,7 @@ export const AppShell: React.FC<AppShellProps> = ({
   currentVault, vaults, currentRole, currentTab, userInfo,
   navigationOpen, navigationCollapsed, navigationAvailable, onToggleNavigation, onCloseNavigation,
   onSelectVault, onDeleteVault, onChangeVaultMode, onSelectTab, onOpenShareModal, onOpenExportModal,
-  onOpenImportModal, onReindexVault, onOpenMcpModal, onOpenCreateVault, onLogout, children,
+  onOpenImportModal, onReindexVault, onOpenVaultSettings, onOpenMcpModal, onOpenCreateVault, onLogout, children,
 }) => {
   const [vaultDropdownOpen, setVaultDropdownOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -103,6 +105,9 @@ export const AppShell: React.FC<AppShellProps> = ({
       : []),
     ...(isOpenVault && currentRole === 'owner' && onReindexVault
       ? [{ id: 'reindex', label: 'Rebuild search index', icon: <Search size={16} />, onSelect: onReindexVault }]
+      : []),
+    ...(currentRole === 'owner' && onOpenVaultSettings
+      ? [{ id: 'vault-settings', label: 'Vault settings', icon: <Lock size={16} />, onSelect: onOpenVaultSettings }]
       : []),
     {
       id: 'ai-toggle',

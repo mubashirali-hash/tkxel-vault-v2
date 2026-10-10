@@ -7,6 +7,7 @@ import { Suspense } from 'react';
 import { MarkdownEditor } from './components/editor/MarkdownEditor.js';
 const KnowledgeGraph = React.lazy(() => import('./components/graph/KnowledgeGraph.js').then(m => ({ default: m.KnowledgeGraph })));
 const AuditViewer = React.lazy(() => import('./components/audit/AuditViewer.js').then(m => ({ default: m.AuditViewer })));
+const VaultSettingsModal = React.lazy(() => import('./components/vault/VaultSettingsModal.js').then(m => ({ default: m.VaultSettingsModal })));
 const SharingModal = React.lazy(() => import('./components/sharing/SharingModal.js').then(m => ({ default: m.SharingModal })));
 const ExportModal = React.lazy(() => import('./components/export/ExportModal.js').then(m => ({ default: m.ExportModal })));
 const ImporterModal = React.lazy(() => import('./components/ingestion/ImporterModal.js').then(m => ({ default: m.ImporterModal })));
@@ -206,9 +207,11 @@ export const App: React.FC = () => {
   useEffect(() => {
     setVaultListSettled(false);
     const fetchVaults = async () => {
+      const token = ssoToken || getAuthToken();
+      // Signed out: the server would refuse the request, and the list must not count as settled,
+      // or the placeholder vault would be requested the moment someone signs in
+      if (!token) return;
       try {
-        const token = ssoToken || getAuthToken();
-        if (!token) return; // signed out: the server would refuse the request
         const res = await fetch(`${API_URL}/vaults`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
@@ -418,6 +421,7 @@ export const App: React.FC = () => {
 
   // Modal Dialog States
   const [isShareOpen, setIsShareOpen] = useState(false);
+  const [isVaultSettingsOpen, setIsVaultSettingsOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [isAddSkillOpen, setIsAddSkillOpen] = useState(false);
@@ -1446,6 +1450,7 @@ export const App: React.FC = () => {
       onOpenExportModal={() => setIsExportOpen(true)}
       onOpenImportModal={() => setIsImportOpen(true)}
       onReindexVault={handleReindexVault}
+      onOpenVaultSettings={() => setIsVaultSettingsOpen(true)}
       onOpenMcpModal={() => setIsMcpOpen(true)}
       onOpenCreateVault={() => setIsCreateVaultOpen(true)}
       onLogout={() => {
@@ -1878,6 +1883,22 @@ export const App: React.FC = () => {
 
       {/* MODALS */}
       <Suspense fallback={null}>
+        {isVaultSettingsOpen && (
+          <VaultSettingsModal
+            isOpen={isVaultSettingsOpen}
+            vault={currentVault}
+            isOwner={currentRole === 'owner'}
+            currentUserEmail={userInfo?.email || ''}
+            token={ssoToken || getAuthToken()}
+            onClose={() => setIsVaultSettingsOpen(false)}
+            onVaultShredded={(shredded) => {
+              // The server has already destroyed the vault; drop it from the list and leave it
+              const remaining = vaults.filter((v) => v.id !== shredded.id);
+              setVaults(remaining);
+              if (remaining.length > 0) setCurrentVault(remaining[0]);
+            }}
+          />
+        )}
         <SharingModal
           isOpen={isShareOpen}
           vault={currentVault}
