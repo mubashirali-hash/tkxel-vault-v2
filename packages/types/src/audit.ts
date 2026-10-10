@@ -14,6 +14,7 @@ export type AuditAction =
   | 'export_locked_denied'
   | 'create_page'
   | 'edit_page'
+  | 'rename_page'
   | 'publish_page'
   | 'unpublish_page'
   | 'delete_page'

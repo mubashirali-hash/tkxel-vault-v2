@@ -14,7 +14,7 @@ export type PageType =
   | 'other'
   | (string & {});
 
-export type VersionStatus = 'draft' | 'published';
+export type VersionStatus = 'draft' | 'published' | 'unpublished';
 
 export interface Page {
   id: string;
