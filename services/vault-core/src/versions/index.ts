@@ -1,10 +1,11 @@
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { db } from '../db.js';
-import { versions, pages, vaults, chunks } from '../schema/index.js';
+import { versions, pages, vaults, chunks, auditEvents } from '../schema/index.js';
 import { createKmsProvider, EnvelopeEncryption } from '../crypto/kms.js';
 import { MarkdownChunker } from '../search/chunker.js';
 import { getEmbeddingProvider, EmbeddingProvider, validateEmbeddingBatch, EmbeddingConfigurationError } from '../search/embedding-provider.js';
 import { lockPageForMutation } from '../storage/page-lock.js';
+import { LinkGraphIndexer } from '../markdown/indexer.js';
 
 export async function saveDraft(
   pageId: string,
@@ -160,6 +161,19 @@ export async function saveDraft(
         }
       }
 
+      // 11. Keep the link graph in step with the saved content (FR-10): outgoing links are replaced
+      // atomically, and ghost links elsewhere in the vault that name this page are resolved.
+      await LinkGraphIndexer.updateLinksForPage(lockedPage.vault_id, pageId, content, tx);
+      await LinkGraphIndexer.resolveIncomingGhostLinks(pageId, tx);
+
+      // 12. Append-only audit record, in the same transaction as the write it describes (FR-81)
+      await tx.insert(auditEvents).values({
+        actor_id: authorId,
+        action: 'edit_page',
+        target_id: pageId,
+        metadata: { vault_id: lockedPage.vault_id, version_id: draftId!, status: 'draft', content_bytes: Buffer.byteLength(content, 'utf-8') },
+      });
+
       return { draftId: draftId!, updated_at: newUpdatedAt.toISOString() };
     });
   } finally {
@@ -287,6 +301,22 @@ export async function publishVersion(pageId: string, authorId: string, provider?
         }
       }
 
+      // 9. Link graph alignment with the published content (covers drafts written outside saveDraft,
+      // e.g. imports and notes added through Claude). Locked vaults keep no link metadata.
+      const publishedContent = vault.mode === 'open'
+        ? EnvelopeEncryption.decryptToString(draft.encrypted_blob, dek)
+        : '';
+      await LinkGraphIndexer.updateLinksForPage(lockedPage.vault_id, pageId, publishedContent, tx);
+      await LinkGraphIndexer.resolveIncomingGhostLinks(pageId, tx);
+
+      // 10. Append-only audit record, in the same transaction as the publish (FR-81)
+      await tx.insert(auditEvents).values({
+        actor_id: authorId,
+        action: 'publish_page',
+        target_id: pageId,
+        metadata: { vault_id: lockedPage.vault_id, version_id: draftId, version_number: draft.number },
+      });
+
       return draftId;
     });
   } finally {
@@ -294,26 +324,41 @@ export async function publishVersion(pageId: string, authorId: string, provider?
   }
 }
 
+/**
+ * Decrypts a page's content.
+ * With `publishedOnly` (Readers, Consumers and every retrieval tool, FR-43) only the latest published
+ * snapshot is ever returned; a page that has never been published yields null.
+ */
 export async function getPageContent(
   pageId: string,
-  versionId?: string
+  versionId?: string,
+  options?: { publishedOnly?: boolean }
 ): Promise<{ content: string; versionId: string; versionNumber: number } | null> {
   const pageRec = await db.select().from(pages).where(eq(pages.id, pageId)).limit(1);
   if (!pageRec[0]) return null;
 
+  const publishedOnly = options?.publishedOnly === true;
   const targetVersionId = versionId || pageRec[0].current_version_id;
 
   let versionRecord;
   if (targetVersionId) {
-    const vRows = await db.select().from(versions).where(eq(versions.id, targetVersionId)).limit(1);
+    // The version must belong to this page; never decrypt another page's version by id
+    const vRows = await db.select().from(versions)
+      .where(and(eq(versions.id, targetVersionId), eq(versions.page_id, pageId)))
+      .limit(1);
     versionRecord = vRows[0];
+    if (versionRecord && publishedOnly && versionRecord.status !== 'published') {
+      versionRecord = undefined;
+    }
   }
 
   if (!versionRecord) {
-    // Fall back to latest published or latest draft
+    // Fall back to the latest published version, or (privileged callers only) the latest of any status
     const allVersions = await db.select()
       .from(versions)
-      .where(eq(versions.page_id, pageId))
+      .where(publishedOnly
+        ? and(eq(versions.page_id, pageId), eq(versions.status, 'published'))
+        : eq(versions.page_id, pageId))
       .orderBy(desc(versions.number))
       .limit(1);
     versionRecord = allVersions[0];

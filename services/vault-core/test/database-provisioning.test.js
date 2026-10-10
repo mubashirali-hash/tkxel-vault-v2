@@ -98,6 +98,24 @@ test('PostgreSQL Structural Enforcement & Database Provisioning', async (t) => {
           },
           /links_resolved_has_target|check constraint/i
         );
+
+        // FR-84: migrations alone must leave audit_events append-only
+        const auditTrigRes = await client.query(
+          `SELECT tgname FROM pg_trigger
+           WHERE tgname IN ('trg_audit_events_no_update', 'trg_audit_events_no_delete', 'trg_audit_events_no_truncate')`
+        );
+        assert.equal(auditTrigRes.rows.length, 3, 'All 3 audit append-only triggers must be installed by migrations');
+
+        await client.query(
+          `INSERT INTO audit_events (actor_id, action, target_id, metadata)
+           VALUES ('owner-1', 'create_vault', $1, '{}'::jsonb)`,
+          [vaultId]
+        );
+        await assert.rejects(() => client.query(`UPDATE audit_events SET action = 'tampered'`), /append-only/);
+        await assert.rejects(() => client.query(`DELETE FROM audit_events`), /append-only/);
+        await assert.rejects(() => client.query(`TRUNCATE audit_events`), /append-only/);
+        const auditCount = await client.query(`SELECT count(*)::int AS n FROM audit_events`);
+        assert.equal(auditCount.rows[0].n, 1);
       });
     } finally {
       await withAdminClient(async (admin) => {

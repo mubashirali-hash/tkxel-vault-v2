@@ -35,6 +35,10 @@
       "types": "./dist/crypto/kms.d.ts",
       "default": "./dist/crypto/kms.js"
     },
+    "./secrets-preload": {
+      "types": "./dist/config/preload-secrets.d.ts",
+      "default": "./dist/config/preload-secrets.js"
+    },
     "./markdown": {
       "types": "./dist/markdown/index.d.ts",
       "default": "./dist/markdown/index.js"
@@ -48,9 +52,12 @@
     "clean": "rimraf dist"
   },
   "dependencies": {
+    "@aws-sdk/client-kms": "^3.1147.0",
+    "@aws-sdk/client-secrets-manager": "^3.1147.0",
     "@tkxel-vault/types": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "gpt-tokenizer": "^4.0.0",
+    "jose": "^6.2.12",
     "jszip": "^3.10.1",
     "pg": "^8.13.3",
     "yaml": "^2.7.0"

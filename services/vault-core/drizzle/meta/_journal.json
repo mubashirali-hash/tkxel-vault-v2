@@ -15,6 +15,62 @@
       "when": 1789140000000,
       "tag": "0001_add_link_graph_invariants",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791504000000,
+      "tag": "0002_audit_append_only",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791504100000,
+      "tag": "0003_timeline_ciphertext_append_only",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791504200000,
+      "tag": "0004_timeline_rekey_exception",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791504300000,
+      "tag": "0005_user_groups",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791504400000,
+      "tag": "0006_vault_assets",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791504500000,
+      "tag": "0007_vault_rate_limits",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791504600000,
+      "tag": "0008_break_glass",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791504700000,
+      "tag": "0009_search_indexes",
+      "breakpoints": true
     }
   ]
 }

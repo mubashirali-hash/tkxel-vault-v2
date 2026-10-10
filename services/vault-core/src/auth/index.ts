@@ -1,6 +1,6 @@
-import { eq, and, isNull, sql } from 'drizzle-orm';
+import { eq, and, isNull, sql, inArray, gt } from 'drizzle-orm';
 import { db } from '../db.js';
-import { vaults, shares } from '../schema/index.js';
+import { vaults, shares, userGroups, breakGlassRequests } from '../schema/index.js';
 
 export type Role = 'owner' | 'editor' | 'reader' | 'consumer';
 export type VaultMode = 'open' | 'locked';
@@ -9,6 +9,7 @@ export type VaultOperation =
   | 'write_open_content'
   | 'list_locked_skills'
   | 'execute_locked_skill'
+  | 'manage_locked_content'
   | 'manage_vault';
 
 export interface VaultAuthorizationContext {
@@ -39,11 +40,86 @@ export function isVaultOperationAllowed(
     case 'list_locked_skills':
     case 'execute_locked_skill':
       return mode === 'locked' && (role === 'owner' || role === 'editor' || role === 'consumer');
+    case 'manage_locked_content':
+      // Controlled administrative workflow (FR-53): Owners and Editors only; Consumers never
+      return mode === 'locked' && (role === 'owner' || role === 'editor');
     case 'manage_vault':
       return role === 'owner';
     default:
       return false;
   }
+}
+
+/** Share principal granting access to every authenticated member of the organization (FR-52). */
+export const ORG_WIDE_PRINCIPAL = 'org:all';
+const GROUP_PRINCIPAL_PREFIX = 'group:';
+/** Group memberships older than this are ignored, bounding how long a removed member keeps access. */
+const GROUP_MEMBERSHIP_TTL_MS = 24 * 60 * 60 * 1000;
+const ROLE_RANK: Record<string, number> = { owner: 4, editor: 3, reader: 2, consumer: 1 };
+
+/** Validates and normalizes a share principal: an email, `group:<id>`, or `org:all`. Returns null when invalid. */
+export function normalizeSharePrincipal(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const principal = value.trim().toLowerCase();
+  if (!principal || principal.length > 255) return null;
+  if (principal === ORG_WIDE_PRINCIPAL) return principal;
+  if (principal.startsWith(GROUP_PRINCIPAL_PREFIX)) {
+    return /^group:[a-z0-9][a-z0-9 ._@:\/-]{0,200}$/.test(principal) ? principal : null;
+  }
+  return /^[^\s@:]+@[^\s@:]+\.[^\s@:]+$/.test(principal) ? principal : null;
+}
+
+/**
+ * Replaces the stored group membership of a user with the groups asserted by their current SSO token.
+ * Called at authentication, so membership follows the identity provider on every sign-in.
+ */
+export async function recordUserGroups(userId: string, groups: string[], client: any = db): Promise<void> {
+  const user = userId.toLowerCase().trim();
+  if (!user) return;
+  const unique = Array.from(new Set(groups.map((g) => g.trim().toLowerCase()).filter(Boolean))).slice(0, 500);
+  await client.transaction(async (tx: any) => {
+    await tx.delete(userGroups).where(eq(userGroups.user_id, user));
+    if (unique.length > 0) {
+      await tx.insert(userGroups).values(unique.map((group_id) => ({ user_id: user, group_id })));
+    }
+  });
+}
+
+/** Every share principal that applies to a user: their email, their current groups, and the organization. */
+export async function getUserPrincipals(userId: string, client: any = db): Promise<string[]> {
+  const user = userId.toLowerCase().trim();
+  if (!user) return [];
+  const rows = await client
+    .select({ group_id: userGroups.group_id })
+    .from(userGroups)
+    .where(and(eq(userGroups.user_id, user), gt(userGroups.seen_at, new Date(Date.now() - GROUP_MEMBERSHIP_TTL_MS))));
+  return [user, ORG_WIDE_PRINCIPAL, ...rows.map((r: { group_id: string }) => `${GROUP_PRINCIPAL_PREFIX}${r.group_id}`)];
+}
+
+function strongestRole(roles: string[]): Role | null {
+  let best: string | null = null;
+  for (const role of roles) {
+    // Ownership is never conferred by a share
+    if (role === 'owner' || !(role in ROLE_RANK)) continue;
+    if (!best || ROLE_RANK[role] > ROLE_RANK[best]) best = role;
+  }
+  return best as Role | null;
+}
+
+async function hasActiveGrant(client: any, normalizedUser: string, vaultId: string): Promise<boolean> {
+  const grants = await client
+    .select({ id: breakGlassRequests.id })
+    .from(breakGlassRequests)
+    .where(
+      and(
+        eq(breakGlassRequests.vault_id, vaultId),
+        sql`lower(${breakGlassRequests.requester_id}) = ${normalizedUser}`,
+        eq(breakGlassRequests.status, 'approved'),
+        gt(breakGlassRequests.expires_at, new Date())
+      )
+    )
+    .limit(1);
+  return grants.length > 0;
 }
 
 export async function getUserRoleForVault(
@@ -55,12 +131,9 @@ export async function getUserRoleForVault(
   if (!userId) return null;
   const normalizedUser = userId.toLowerCase().trim();
 
-  // 1. Check if user is in configured global owner emails or legacy admin
-  const configuredOwners = getConfiguredGlobalOwners();
-
-  if (configuredOwners.includes(normalizedUser)) {
-    return 'owner';
-  }
+  // 1. Configured administrators manage open vaults. They get no standing access to a locked vault
+  //    they do not own (NFR-06): that takes an approved, unexpired break-glass grant (step 2b).
+  const isAdministrator = getConfiguredGlobalOwners().includes(normalizedUser);
 
   // 2. Check if user is the direct vault owner in DB
   let vaultQuery = client.select().from(vaults).where(eq(vaults.id, vaultId));
@@ -75,14 +148,25 @@ export async function getUserRoleForVault(
     return 'owner';
   }
 
-  // 3. Check if user has an active share record (revoked_at is null, case-insensitive match)
+  // 2b. Administrator access
+  if (isAdministrator && vaultRows.length > 0) {
+    if (vaultRows[0].mode !== 'locked') {
+      return 'owner';
+    }
+    if (await hasActiveGrant(client, normalizedUser, vaultId)) {
+      return 'owner';
+    }
+  }
+
+  // 3. Active shares granted to the user directly, to one of their SSO groups, or org-wide
+  const principals = await getUserPrincipals(normalizedUser, client);
   let shareQuery = client
     .select()
     .from(shares)
     .where(
       and(
         eq(shares.vault_id, vaultId),
-        sql`lower(${shares.principal_id}) = ${normalizedUser}`,
+        inArray(sql`lower(${shares.principal_id})`, principals),
         isNull(shares.revoked_at)
       )
     );
@@ -94,11 +178,8 @@ export async function getUserRoleForVault(
   }
   const shareRows = await shareQuery;
 
-  if (shareRows.length > 0) {
-    return shareRows[0].role as Role;
-  }
-
-  return null;
+  // Several shares can apply; the most capable role wins
+  return strongestRole(shareRows.map((s: { role: string }) => s.role));
 }
 
 export interface UserVaultAccess {
@@ -118,21 +199,31 @@ export async function getUserAccessibleVaults(userId: string): Promise<UserVault
   // Fetch all vaults
   const allVaults = await db.select().from(vaults);
 
+  // Administrators own every open vault. A locked vault they do not own is resolved below like anyone
+  // else's, plus any active break-glass grant (NFR-06).
+  const grantedVaultIds = new Set<string>();
   if (isGlobalOwner) {
-    return allVaults.map((v) => ({
-      vaultId: v.id,
-      mode: v.mode as 'open' | 'locked',
-      role: 'owner' as Role,
-    }));
+    const grants = await db
+      .select({ vault_id: breakGlassRequests.vault_id })
+      .from(breakGlassRequests)
+      .where(
+        and(
+          sql`lower(${breakGlassRequests.requester_id}) = ${normalizedUser}`,
+          eq(breakGlassRequests.status, 'approved'),
+          gt(breakGlassRequests.expires_at, new Date())
+        )
+      );
+    grants.forEach((g) => grantedVaultIds.add(g.vault_id));
   }
 
-  // Active shares for this user
+  // Active shares for this user, their SSO groups, and the organization
+  const principals = await getUserPrincipals(normalizedUser);
   const activeShares = await db
     .select()
     .from(shares)
     .where(
       and(
-        sql`lower(${shares.principal_id}) = ${normalizedUser}`,
+        inArray(sql`lower(${shares.principal_id})`, principals),
         isNull(shares.revoked_at)
       )
     );
@@ -140,12 +231,15 @@ export async function getUserAccessibleVaults(userId: string): Promise<UserVault
   const accessList: UserVaultAccess[] = [];
 
   for (const v of allVaults) {
-    if (v.owner_id.toLowerCase().trim() === normalizedUser) {
+    if (
+      v.owner_id.toLowerCase().trim() === normalizedUser ||
+      (isGlobalOwner && (v.mode !== 'locked' || grantedVaultIds.has(v.id)))
+    ) {
       accessList.push({ vaultId: v.id, mode: v.mode as 'open' | 'locked', role: 'owner' });
     } else {
-      const share = activeShares.find((s) => s.vault_id === v.id);
-      if (share) {
-        accessList.push({ vaultId: v.id, mode: v.mode as 'open' | 'locked', role: share.role as Role });
+      const role = strongestRole(activeShares.filter((s) => s.vault_id === v.id).map((s) => s.role));
+      if (role) {
+        accessList.push({ vaultId: v.id, mode: v.mode as 'open' | 'locked', role });
       }
     }
   }

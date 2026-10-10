@@ -9,7 +9,8 @@ import {
   timestamp,
   customType,
   index,
-  check
+  check,
+  primaryKey
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
@@ -50,6 +51,8 @@ export const vaults = pgTable('vaults', {
   export_policy: varchar('export_policy', { length: 32 })
     .notNull()
     .$type<'allowed_for_owner' | 'strictly_forbidden'>(),
+    // Owner-configured per-user hourly limits (FR-67); null = platform defaults
+    rate_limits: jsonb('rate_limits'),
   created_at: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updated_at: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull()
 });
@@ -95,7 +98,7 @@ export const versions = pgTable(
     number: integer('number').notNull(),
     status: varchar('status', { length: 32 })
       .notNull()
-      .$type<'draft' | 'published'>(),
+      .$type<'draft' | 'published' | 'unpublished'>(),
     encrypted_blob: bytea('encrypted_blob').notNull(),
     created_by: varchar('created_by', { length: 255 }).notNull(),
     created_at: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
@@ -205,6 +208,62 @@ export const shares = pgTable(
   (table) => [
     index('idx_shares_vault').on(table.vault_id),
     index('idx_shares_principal').on(table.principal_id)
+  ]
+);
+
+// 8b. User Groups (SSO group membership observed at sign-in; resolves group shares, FR-52)
+export const userGroups = pgTable(
+  'user_groups',
+  {
+    user_id: varchar('user_id', { length: 255 }).notNull(),
+    group_id: varchar('group_id', { length: 255 }).notNull(),
+    seen_at: timestamp('seen_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    primaryKey({ name: 'user_groups_pk', columns: [table.user_id, table.group_id] }),
+    index('idx_user_groups_user').on(table.user_id)
+  ]
+);
+
+// 8c. Assets (vault-hosted images, FR-02): ciphertext only
+export const assets = pgTable(
+  'assets',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    vault_id: uuid('vault_id')
+      .notNull()
+      .references(() => vaults.id, { onDelete: 'cascade' }),
+    file_name: varchar('file_name', { length: 255 }).notNull(),
+    mime_type: varchar('mime_type', { length: 64 }).notNull(),
+    size_bytes: integer('size_bytes').notNull(),
+    encrypted_blob: bytea('encrypted_blob').notNull(),
+    created_by: varchar('created_by', { length: 255 }).notNull(),
+    created_at: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    index('idx_assets_vault').on(table.vault_id)
+  ]
+);
+
+// 8d. Break-glass requests (NFR-06): dual-authorized, time-limited administrator access to a locked vault
+export const breakGlassRequests = pgTable(
+  'break_glass_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    vault_id: uuid('vault_id')
+      .notNull()
+      .references(() => vaults.id, { onDelete: 'cascade' }),
+    requester_id: varchar('requester_id', { length: 255 }).notNull(),
+    reason: text('reason').notNull(),
+    status: varchar('status', { length: 16 }).notNull().default('pending'),
+    approver_id: varchar('approver_id', { length: 255 }),
+    requested_at: timestamp('requested_at', { withTimezone: true }).defaultNow().notNull(),
+    decided_at: timestamp('decided_at', { withTimezone: true }),
+    expires_at: timestamp('expires_at', { withTimezone: true })
+  },
+  (table) => [
+    index('idx_break_glass_vault').on(table.vault_id),
+    index('idx_break_glass_requester').on(table.requester_id)
   ]
 );
 

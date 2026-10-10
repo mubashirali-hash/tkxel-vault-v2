@@ -108,10 +108,15 @@ export class MarkdownEngine {
    * Refactors all wiki-links in a markdown body when a target page is renamed.
    * Matches [[Old Title]], [[Old Title|Alias]], and [[type::Old Title]].
    */
-  static refactorLinks(body: string, oldTitle: string, newTitle: string): string {
+  static refactorLinks(
+    body: string,
+    oldTitle: string,
+    newTitle: string,
+    options?: { caseInsensitive?: boolean }
+  ): string {
     const escapedOld = oldTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     // Pattern matches [[oldTitle]] or [[oldTitle|alias]] or [[typed::oldTitle]]
-    const pattern = new RegExp(`\\[\\[(?:([^:\\]]+)::)?${escapedOld}(?:\\|([^\\]]+))?\\]\\]`, 'g');
+    const pattern = new RegExp(`\\[\\[(?:([^:\\]]+)::)?${escapedOld}(?:\\|([^\\]]+))?\\]\\]`, options?.caseInsensitive ? 'gi' : 'g');
 
     return body.replace(pattern, (_match, typePrefix, alias) => {
       const typePart = typePrefix ? `${typePrefix}::` : '';
