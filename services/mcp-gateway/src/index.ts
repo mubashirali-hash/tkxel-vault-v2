@@ -3,4 +3,5 @@ export * from './auth/oauth.js';
 export * from './auth/policy.js';
 export * from './rate-limiting/index.js';
 export * from './tools/open-retrieval.js';
+export * from './tools/vault-discovery.js';
 export * from './server.js';

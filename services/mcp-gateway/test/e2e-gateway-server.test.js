@@ -207,3 +207,80 @@ test('Regression: SSO deprovision webhook fails closed with 500 when secret is n
     await server.close();
   }
 });
+
+test('FR-80: every tools/call is audited with caller, tool, vault, sizes and outcome; audit failure fails closed', async () => {
+  const oauth = new OAuthValidator('test-key-32b-gateway-secret-ok!', new InMemoryRevocationStore());
+  const vaultA = '11111111-2222-4333-8444-555555555555';
+  const vaultB = '99999999-2222-4333-8444-555555555555';
+  const events = [];
+  let failSink = false;
+
+  const server = new McpGatewayServer({
+    port: 3896,
+    oauthValidator: oauth,
+    vaultStore: {
+      search: async (q) => [{ id: 'doc1', title: 'Doc 1', snippet: `Match for ${q}` }],
+      getPage: async () => null,
+      getLinks: async () => ({ nodes: [], edges: [] }),
+      getContext: async () => ({ markdown: '# Context', tokenEstimate: 50 }),
+      addNote: async () => ({ noteId: 'note_123', status: 'created' }),
+    },
+    accessResolver: async () => [{ vaultId: vaultA, mode: 'open', role: 'reader' }],
+    toolAuditSink: async (event) => {
+      if (failSink) throw new Error('audit store offline');
+      events.push(event);
+    },
+  });
+  await server.listen();
+
+  const token = oauth.createToken({ userId: 'usr_audit', email: 'audit@tkxel.com' });
+  const call = (name, args) =>
+    makeHttpRequest('http://127.0.0.1:3896/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name, arguments: args } }),
+    });
+
+  try {
+    // Non-tool traffic is not a tool invocation
+    await makeHttpRequest('http://127.0.0.1:3896/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    assert.equal(events.length, 0);
+
+    const ok = await call('search', { query: 'SECRET-QUERY-TEXT', vault_id: vaultA });
+    assert.equal(ok.statusCode, 200);
+    assert.equal(events.length, 1);
+    assert.deepEqual(
+      { userId: events[0].userId, tool: events[0].tool, vaultId: events[0].vaultId, status: events[0].status },
+      { userId: 'usr_audit', tool: 'search', vaultId: vaultA, status: 'success' }
+    );
+    assert.ok(events[0].requestBytes > 0 && events[0].responseBytes > 0);
+    assert.ok(!JSON.stringify(events[0]).includes('SECRET-QUERY-TEXT'), 'Audit must not retain query text');
+
+    // Vault the caller has no role in
+    await call('search', { query: 'x', vault_id: vaultB });
+    assert.equal(events[1].status, 'denied');
+    assert.equal(events[1].vaultId, vaultB);
+
+    // Tool outside the caller's palette (reader cannot add_note; locked tools unavailable)
+    await call('run_skill', { skillName: 'x', vaultId: vaultA });
+    assert.equal(events[2].status, 'denied');
+    assert.equal(events[2].tool, 'run_skill');
+
+    // Missing page is an error outcome, not a denial
+    await call('get_page', { title: 'Nope', vault_id: vaultA });
+    assert.equal(events[3].status, 'error');
+
+    // Audit store down -> no tool result is returned
+    failSink = true;
+    const blocked = await call('search', { query: 'x', vault_id: vaultA });
+    assert.equal(blocked.statusCode, 500);
+    assert.equal(blocked.json.error.message, 'audit_write_failed');
+    assert.equal(blocked.json.result, undefined);
+  } finally {
+    await server.close();
+  }
+});

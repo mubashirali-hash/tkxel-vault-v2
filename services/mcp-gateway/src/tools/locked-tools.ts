@@ -3,6 +3,7 @@ import { db } from '@tkxel-vault/vault-core/db';
 import * as schema from '@tkxel-vault/vault-core/schema';
 import { eq, and } from 'drizzle-orm';
 import { createServiceToken } from '@tkxel-vault/skill-runner';
+import { isSkillPublished } from '@tkxel-vault/vault-core';
 
 
 export const LIST_SKILLS_TOOL: McpToolDefinition = {
@@ -32,21 +33,30 @@ export const RUN_SKILL_TOOL: McpToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
-      skillName: {
+      skill: {
         type: 'string',
-        description: 'The name of the skill to execute (e.g., "executive-briefing-agent", "cloud-cost-optimizer").',
+        description: 'Name of the skill to execute, as returned by list_skills.',
+      },
+      inputs: {
+        type: 'object',
+        description: 'Inputs for the skill. Must match the inputs the skill declares; undeclared inputs are rejected.',
+        additionalProperties: true,
       },
       vaultId: {
         type: 'string',
-        description: 'The ID of the authorized locked vault.',
+        description: 'The ID of the authorized locked vault that holds the skill.',
+      },
+      skillName: {
+        type: 'string',
+        description: 'Alias of skill.',
       },
       parameters: {
         type: 'object',
-        description: 'Any parameters required by the skill.',
+        description: 'Alias of inputs.',
         additionalProperties: true,
       },
     },
-    required: ['skillName', 'vaultId'],
+    required: ['vaultId'],
   },
 };
 
@@ -57,16 +67,24 @@ export const ASK_VAULT_TOOL: McpToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
-      query: {
+      vault: {
         type: 'string',
-        description: 'The question to ask the locked vault.',
+        description: 'The ID of the authorized locked vault to ask.',
+      },
+      question: {
+        type: 'string',
+        description: 'The question to ask. The answer is a synthesized summary, capped at 1,500 characters.',
       },
       vaultId: {
         type: 'string',
-        description: 'The ID of the authorized locked vault.',
+        description: 'Alias of vault.',
+      },
+      query: {
+        type: 'string',
+        description: 'Alias of question.',
       },
     },
-    required: ['query', 'vaultId'],
+    required: [],
   },
 };
 
@@ -101,11 +119,31 @@ function sanitizeOutput(output: string, secretInstructions?: string): string {
 
 const LOCKED_TOOL_ROLES = new Set(['owner', 'editor', 'consumer']);
 
+/** SRS 5.2: ask_vault answers are capped at 1,500 characters. */
+export const ASK_VAULT_MAX_CHARS = 1500;
+
+/** Maps a runner failure onto the SRS 5.2 error codes without relaying internal detail. */
+export function toLockedToolErrorCode(status: number | 'aborted' | 'unreachable'): string {
+  if (status === 'aborted' || status === 408 || status === 504) return 'timeout';
+  if (status === 429) return 'rate_limited';
+  if (status === 400 || status === 422) return 'invalid_input';
+  if (status === 401 || status === 403 || status === 404) return 'not_allowed';
+  return 'execution_failed';
+}
+
+function lockedToolError(prefix: string, code: string, detail?: string): ToolCallResult {
+  return {
+    content: [{ type: 'text', text: `${prefix} (${detail || code})` }],
+    structuredContent: { error: code },
+    isError: true,
+  };
+}
+
 function requireAuthorizedLockedVault(
   args: Record<string, unknown> | undefined,
   context: ToolCallContext | undefined,
 ): { vaultId: string; role: string } {
-  const rawVaultId = args?.vaultId ?? args?.vault_id;
+  const rawVaultId = args?.vaultId ?? args?.vault_id ?? args?.vault;
   const vaultId = typeof rawVaultId === 'string' ? rawVaultId.trim() : '';
   const role = vaultId ? context?.roles.get(vaultId) : undefined;
   const mode = vaultId ? context?.vaultModes?.get(vaultId) : undefined;
@@ -153,7 +191,7 @@ export function createLockedRetrievalHandlers() {
         }> = [];
 
         for (const vault of authorizedVaults) {
-          const matchingSkills = allSkills.filter((s) => s.vault_id === vault.id);
+          const matchingSkills = allSkills.filter((s) => s.vault_id === vault.id && isSkillPublished(s));
           for (const sk of matchingSkills) {
             const toolSchema = (sk.tool_schema as any) || {};
             skillCatalog.push({
@@ -195,6 +233,9 @@ export function createLockedRetrievalHandlers() {
               text: markdown,
             },
           ],
+          structuredContent: {
+            skills: skillCatalog.map((item) => ({ name: item.skillName, description: item.description })),
+          },
         };
       } catch (err: any) {
         return {
@@ -211,8 +252,8 @@ export function createLockedRetrievalHandlers() {
 
     handleRunSkill: async (args: any, context: ToolCallContext): Promise<ToolCallResult> => {
       const { vaultId, role } = requireAuthorizedLockedVault(args, context);
-      const skillName = String(args.skillName || args.skill_name || '');
-      const parameters = (args.parameters || args.arguments || {}) as Record<string, unknown>;
+      const skillName = String(args.skill || args.skillName || args.skill_name || '');
+      const parameters = (args.inputs || args.parameters || args.arguments || {}) as Record<string, unknown>;
 
       if (!skillName) {
         return {
@@ -281,21 +322,17 @@ export function createLockedRetrievalHandlers() {
                 text: sanitized,
               },
             ],
+            structuredContent: { result: sanitized, format: 'markdown' },
           };
         } else {
           const errData = (await response.json().catch(() => ({}))) as any;
           const errMsg = errData.error || `Runner service returned status ${response.status}`;
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `Error: Skill execution failed (${errMsg})`,
-              },
-            ],
-            isError: true,
-          };
+          return lockedToolError('Error: Skill execution failed', toLockedToolErrorCode(response.status), errMsg);
         }
       } catch (err: any) {
+        if (err?.name === 'AbortError' || controller.signal.aborted) {
+          return lockedToolError('Error: Skill execution failed', 'timeout');
+        }
         return {
           content: [
             {
@@ -303,6 +340,7 @@ export function createLockedRetrievalHandlers() {
               text: `Error: Skill Runner service unavailable (${err.message || 'unreachable'}). In-process execution fallback is disabled in production mode.`,
             },
           ],
+          structuredContent: { error: 'execution_failed' },
           isError: true,
         };
       }
@@ -310,7 +348,7 @@ export function createLockedRetrievalHandlers() {
 
     handleAskVault: async (args: any, context: ToolCallContext): Promise<ToolCallResult> => {
       const { vaultId, role } = requireAuthorizedLockedVault(args, context);
-      const query = String(args.query || args.question || '');
+      const query = String(args.question || args.query || '');
 
       const requestBody = { vaultId, query, role };
       const serviceToken = createServiceToken({
@@ -344,7 +382,7 @@ export function createLockedRetrievalHandlers() {
 
         if (response.ok) {
           const data = (await response.json()) as any;
-          const sanitized = sanitizeOutput(data.answer || JSON.stringify(data, null, 2));
+          const sanitized = sanitizeOutput(data.answer || JSON.stringify(data, null, 2)).slice(0, ASK_VAULT_MAX_CHARS);
 
           try {
             await db.insert(schema.auditEvents).values({
@@ -371,21 +409,17 @@ export function createLockedRetrievalHandlers() {
                 text: sanitized,
               },
             ],
+            structuredContent: { answer: sanitized },
           };
         } else {
           const errData = (await response.json().catch(() => ({}))) as any;
           const errMsg = errData.error || `Runner service returned status ${response.status}`;
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `Error: Ask vault failed (${errMsg})`,
-              },
-            ],
-            isError: true,
-          };
+          return lockedToolError('Error: Ask vault failed', toLockedToolErrorCode(response.status), errMsg);
         }
       } catch (err: any) {
+        if (err?.name === 'AbortError' || controller.signal.aborted) {
+          return lockedToolError('Error: Ask vault failed', 'timeout');
+        }
         return {
           content: [
             {

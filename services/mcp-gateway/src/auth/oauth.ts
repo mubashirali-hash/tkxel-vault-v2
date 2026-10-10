@@ -1,5 +1,8 @@
 import crypto from 'node:crypto';
 import { OAuth2Client } from 'google-auth-library';
+import { recordUserGroups, type OidcIdentity } from '@tkxel-vault/vault-core';
+
+export type OidcTokenVerifier = (token: string) => Promise<OidcIdentity>;
 
 export interface SsoUserClaims {
   userId: string;
@@ -8,6 +11,11 @@ export interface SsoUserClaims {
   groups: string[];
   tokenId: string; // jti
   expiresAt: number; // unix timestamp in seconds
+}
+
+/** Revocation keys are case-insensitive on identity so every service agrees on them. */
+export function revokedUserKey(userId: string): string {
+  return `revoked:user:${String(userId).trim().toLowerCase()}`;
 }
 
 export interface RevocationStore {
@@ -24,7 +32,7 @@ export class InMemoryRevocationStore implements RevocationStore {
   private revokedUsers = new Set<string>();
 
   public async isRevoked(userId: string, tokenId: string): Promise<boolean> {
-    return this.revokedUsers.has(userId) || this.revokedTokens.has(tokenId);
+    return this.revokedUsers.has(revokedUserKey(userId)) || this.revokedTokens.has(tokenId);
   }
 
   public async revokeToken(tokenId: string): Promise<void> {
@@ -32,7 +40,7 @@ export class InMemoryRevocationStore implements RevocationStore {
   }
 
   public async revokeUser(userId: string): Promise<void> {
-    this.revokedUsers.add(userId);
+    this.revokedUsers.add(revokedUserKey(userId));
   }
 
   public clear(): void {
@@ -52,7 +60,7 @@ export class RedisRevocationStore implements RevocationStore {
   }
 
   public async isRevoked(userId: string, tokenId: string): Promise<boolean> {
-    const userRevoked = await this.redis.get(`revoked:user:${userId}`);
+    const userRevoked = await this.redis.get(revokedUserKey(userId));
     if (userRevoked) return true;
     if (tokenId) {
       const tokenRevoked = await this.redis.get(`revoked:token:${tokenId}`);
@@ -66,8 +74,13 @@ export class RedisRevocationStore implements RevocationStore {
   }
 
   public async revokeUser(userId: string, ttlSeconds = 86400): Promise<void> {
-    await this.redis.set(`revoked:user:${userId}`, '1', 'EX', ttlSeconds);
+    await this.redis.set(revokedUserKey(userId), '1', 'EX', ttlSeconds);
   }
+}
+
+function isGoogleClientConfigured(): boolean {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  return Boolean(clientId) && clientId !== 'replace_with_your_client_id_here';
 }
 
 /**
@@ -75,12 +88,39 @@ export class RedisRevocationStore implements RevocationStore {
  * Verifies JWT tokens, extracts claims, and enforces sub-60-second revocation SLA via RevocationStore.
  */
 export class OAuthValidator {
-  private secretKey: string;
+  private secretKey?: string;
   private revocationStore: RevocationStore;
+  private oidcVerifier?: OidcTokenVerifier;
+  private recordGroups: (userId: string, groups: string[]) => Promise<void>;
 
-  constructor(secretKey: string = 'tkxel-vault-dev-sso-jwt-secret-key-32b', revocationStore?: RevocationStore) {
+  /**
+   * @param secretKey Optional HMAC secret for locally signed tokens (tests and explicit local dev only).
+   *                  When omitted, locally signed tokens are rejected and only SSO ID tokens are accepted.
+   */
+  constructor(
+    secretKey?: string,
+    revocationStore?: RevocationStore,
+    options?: {
+      /** Verifier for a corporate OIDC provider such as Microsoft Entra ID. */
+      oidcVerifier?: OidcTokenVerifier;
+      /** Persists the SSO groups asserted by a verified token; defaults to the shared store. */
+      recordGroups?: (userId: string, groups: string[]) => Promise<void>;
+    }
+  ) {
+    if (secretKey !== undefined && secretKey.length === 0) {
+      throw new Error('OAuthValidator HMAC secret must not be empty.');
+    }
     this.secretKey = secretKey;
     this.revocationStore = revocationStore || new InMemoryRevocationStore();
+    this.oidcVerifier = options?.oidcVerifier;
+    this.recordGroups = options?.recordGroups ?? recordUserGroups;
+  }
+
+  /**
+   * True when at least one token verifier (SSO client id or explicit HMAC secret) is configured.
+   */
+  public hasVerifier(): boolean {
+    return Boolean(this.secretKey) || Boolean(this.oidcVerifier) || isGoogleClientConfigured();
   }
 
   /**
@@ -93,6 +133,9 @@ export class OAuthValidator {
     expiresInSeconds?: number;
     tokenId?: string;
   }): string {
+    if (!this.secretKey) {
+      throw new Error('Local token signing is disabled: no HMAC secret configured.');
+    }
     const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
     const now = Math.floor(Date.now() / 1000);
     const exp = now + (payload.expiresInSeconds ?? 3600);
@@ -130,8 +173,28 @@ export class OAuthValidator {
 
     let payload: any;
     
-    // Try Google Token Validation first
-    if (clientId && clientId !== 'replace_with_your_client_id_here') {
+    // Corporate OIDC provider (e.g. Microsoft Entra ID): signature, issuer, audience and expiry verified
+    if (this.oidcVerifier) {
+      try {
+        const identity = await this.oidcVerifier(token);
+        payload = {
+          sub: identity.userId,
+          email: identity.email,
+          groups: identity.groups,
+          jti: identity.tokenId,
+          exp: identity.expiresAt,
+        };
+        // Group shares follow the identity provider on every authenticated request
+        await this.recordGroups(identity.userId, identity.groups);
+      } catch {
+        if (!this.secretKey && !isGoogleClientConfigured()) {
+          throw new Error('Token verification failed.');
+        }
+      }
+    }
+
+    // Google Workspace ID tokens
+    if (!payload && clientId && isGoogleClientConfigured()) {
       try {
         const oauthClient = new OAuth2Client(clientId);
         const ticket = await oauthClient.verifyIdToken({
@@ -159,12 +222,18 @@ export class OAuthValidator {
           };
         }
       } catch (err) {
-        console.error('Google token verification failed, falling back to HMAC:', err);
+        // Without an explicitly configured HMAC secret there is no fallback verifier: fail closed.
+        if (!this.secretKey) {
+          throw new Error('Token verification failed.');
+        }
       }
     }
 
-    // Fallback to local HMAC if Google failed or not configured (useful for tests)
+    // Locally signed tokens are accepted only when an HMAC secret was explicitly configured (tests, local dev)
     if (!payload) {
+      if (!this.secretKey) {
+        throw new Error('Token verification failed.');
+      }
       const parts = token.split('.');
       if (parts.length !== 3) {
         throw new Error('Invalid JWT format.');
@@ -176,7 +245,9 @@ export class OAuthValidator {
         .update(`${headerB64}.${bodyB64}`)
         .digest('base64url');
 
-      if (signatureB64 !== expectedSignature) {
+      const actual = Buffer.from(signatureB64);
+      const expected = Buffer.from(expectedSignature);
+      if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) {
         throw new Error('Invalid token signature.');
       }
 
@@ -184,7 +255,7 @@ export class OAuthValidator {
       payload = JSON.parse(payloadJson);
       
       const now = Math.floor(Date.now() / 1000);
-      if (payload.exp && payload.exp < now) {
+      if (typeof payload.exp !== 'number' || payload.exp < now) {
         throw new Error('Token has expired.');
       }
     }

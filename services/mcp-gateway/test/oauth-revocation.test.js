@@ -143,3 +143,69 @@ test('Redis Revocation Store: enforces atomic revocation against live/mock Redis
     /Token or user access has been revoked/
   );
 });
+
+test('Regression 15.1: validator without an HMAC secret rejects locally signed tokens, including the former built-in default', async () => {
+  const origClientId = process.env.GOOGLE_CLIENT_ID;
+  delete process.env.GOOGLE_CLIENT_ID;
+  try {
+    const forged = new OAuthValidator('tkxel-vault-dev-sso-jwt-secret-key-32b').createToken({
+      userId: 'victim@tkxel.com',
+      email: 'victim@tkxel.com',
+    });
+
+    const validator = new OAuthValidator();
+    assert.equal(validator.hasVerifier(), false);
+    await assert.rejects(() => validator.validateToken(`Bearer ${forged}`), /Token verification failed/);
+    assert.throws(
+      () => validator.createToken({ userId: 'u', email: 'u@tkxel.com' }),
+      /Local token signing is disabled/
+    );
+  } finally {
+    if (origClientId) process.env.GOOGLE_CLIENT_ID = origClientId;
+  }
+});
+
+test('Regression 15.1: locally signed token without exp is rejected', async () => {
+  const crypto = await import('node:crypto');
+  const secret = 'test-secret-key-32b-length-ok!!!';
+  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+  const body = Buffer.from(JSON.stringify({ sub: 'u', email: 'u@tkxel.com' })).toString('base64url');
+  const sig = crypto.createHmac('sha256', secret).update(`${header}.${body}`).digest('base64url');
+
+  const validator = new OAuthValidator(secret);
+  await assert.rejects(() => validator.validateToken(`Bearer ${header}.${body}.${sig}`), /Token has expired/);
+});
+
+test('Regression 15.25: Redis revocation keys are identity-normalized so gateway and API server agree', async () => {
+  const { RedisRevocationStore, revokedUserKey } = await import('../dist/auth/oauth.js');
+  const data = new Map();
+  const fakeRedis = {
+    get: async (key) => data.get(key) ?? null,
+    set: async (key, value) => {
+      data.set(key, value);
+      return 'OK';
+    },
+  };
+  const store = new RedisRevocationStore(fakeRedis);
+  const validator = new OAuthValidator('test-secret-key-32b-length-ok!!!', store);
+  const token = validator.createToken({ userId: 'Alice@Tkxel.com', email: 'Alice@Tkxel.com' });
+
+  await validator.validateToken(`Bearer ${token}`);
+  await store.revokeUser('ALICE@tkxel.com');
+
+  assert.equal(revokedUserKey(' Alice@Tkxel.com '), 'revoked:user:alice@tkxel.com');
+  assert.ok(data.has('revoked:user:alice@tkxel.com'));
+  await assert.rejects(() => validator.validateToken(`Bearer ${token}`), /revoked/);
+});
+
+test('Regression 15.25: an unreachable revocation store rejects the token (fail closed)', async () => {
+  const { RedisRevocationStore } = await import('../dist/auth/oauth.js');
+  const store = new RedisRevocationStore({
+    get: async () => {
+      throw new Error('ECONNREFUSED');
+    },
+  });
+  const validator = new OAuthValidator('test-secret-key-32b-length-ok!!!', store);
+  const token = validator.createToken({ userId: 'bob@tkxel.com', email: 'bob@tkxel.com' });
+  await assert.rejects(() => validator.validateToken(`Bearer ${token}`));
+});

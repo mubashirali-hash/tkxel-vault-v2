@@ -28,6 +28,17 @@ export interface McpToolDefinition {
   };
 }
 
+/** Protocol revisions this server can speak, newest first. */
+export const SUPPORTED_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'] as const;
+
+export function isSupportedProtocolVersion(version: unknown): boolean {
+  return typeof version === 'string' && (SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(version);
+}
+
+export function negotiateProtocolVersion(requested: unknown): string {
+  return isSupportedProtocolVersion(requested) ? (requested as string) : SUPPORTED_PROTOCOL_VERSIONS[0];
+}
+
 export interface ToolCallResult {
   content: Array<{
     type: 'text' | 'image' | 'resource';
@@ -35,6 +46,8 @@ export interface ToolCallResult {
     data?: string;
     mimeType?: string;
   }>;
+  /** Machine-readable result in the shape defined by SRS section 5. */
+  structuredContent?: Record<string, unknown>;
   isError?: boolean;
 }
 
@@ -102,7 +115,8 @@ export class StreamableHttpTransport {
         jsonrpc: '2.0',
         id: message.id,
         result: {
-          protocolVersion: MCP_PROTOCOL_VERSION,
+          // Echo the client's version when this server supports it, otherwise offer the latest
+          protocolVersion: negotiateProtocolVersion((message.params as any)?.protocolVersion),
           serverInfo: this.serverInfo,
           capabilities: {
             tools: {

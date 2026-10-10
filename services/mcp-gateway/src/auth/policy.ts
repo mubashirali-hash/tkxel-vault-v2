@@ -9,6 +9,8 @@ export interface UserVaultAccess {
 export const OPEN_RETRIEVAL_TOOLS = ['search', 'get_page', 'get_links', 'get_context'];
 export const OPEN_EDITOR_TOOLS = ['add_note'];
 export const LOCKED_TOOLS = ['list_skills', 'run_skill', 'ask_vault'];
+/** Offered to any caller who can use at least one vault, so they can find the vault IDs the other tools need. */
+export const DISCOVERY_TOOLS = ['list_vaults'];
 
 /**
  * Dynamic Tool Palette Policy Engine (FR-62 to FR-64, FR-68).
@@ -58,6 +60,11 @@ export class ToolPalettePolicy {
     // Locked vault tools
     if (hasLockedConsumer) {
       LOCKED_TOOLS.forEach((tool) => authorized.add(tool));
+    }
+
+    // Vault discovery, only when there is something to discover
+    if (authorized.size > 0) {
+      DISCOVERY_TOOLS.forEach((tool) => authorized.add(tool));
     }
 
     return authorized;

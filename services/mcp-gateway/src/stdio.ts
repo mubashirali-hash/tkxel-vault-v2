@@ -1,3 +1,4 @@
+import { LIST_VAULTS_TOOL, createVaultDiscoveryHandler } from './tools/vault-discovery.js';
 import readline from 'node:readline';
 import { StreamableHttpTransport, JsonRpcRequest } from './transport/streamable-http.js';
 import {
@@ -40,6 +41,7 @@ async function runStdioMcpServer() {
   transport.registerTool(LIST_SKILLS_TOOL, lockedHandlers.handleListSkills);
   transport.registerTool(RUN_SKILL_TOOL, lockedHandlers.handleRunSkill);
   transport.registerTool(ASK_VAULT_TOOL, lockedHandlers.handleAskVault);
+  transport.registerTool(LIST_VAULTS_TOOL, createVaultDiscoveryHandler());
 
   const userId = process.env.DESKTOP_USER_ID || process.env.USER_ID || 'desktop-agent';
   let userVaults: Array<{ vaultId: string; mode: 'open' | 'locked'; role: string }> = [];
