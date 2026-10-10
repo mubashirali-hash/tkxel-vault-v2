@@ -154,7 +154,7 @@ export const SharingModal: React.FC<SharingModalProps> = ({
             <form onSubmit={handleAdd} style={{ display: 'flex', gap: '8px' }}>
               <input
                 type="text"
-                placeholder="User email (e.g. user@tkxel.com)"
+                placeholder="Email, group:<name>, or org:all"
                 value={newPrincipal}
                 onChange={(e) => setNewPrincipal(e.target.value)}
                 style={{
@@ -200,7 +200,7 @@ export const SharingModal: React.FC<SharingModalProps> = ({
               </button>
             </form>
             <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-              Enter any authorized Google SSO email. Permissions apply immediately upon sign-in.
+              Enter a person's SSO email, an SSO group as group:&lt;name&gt;, or org:all for everyone in the organization. Permissions apply at the next sign-in.
             </div>
           </div>
         ) : (

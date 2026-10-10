@@ -1,7 +1,8 @@
 import { SuggestedLink, AiCategorySuggestion, SkillDraft, VaultNoteFull, AiAction, SkillClassification, AutoApplyWikiLinksResult } from './types.js';
 import { getAuthToken } from '../../utils/storage.js';
+import { API_URL } from '../../utils/api-base.js';
 
-const API_BASE = 'http://localhost:3002/api/ai';
+const API_BASE = `${API_URL}/ai`;
 
 export class NotesAiClient {
   private static getAuthHeaders(): Record<string, string> {

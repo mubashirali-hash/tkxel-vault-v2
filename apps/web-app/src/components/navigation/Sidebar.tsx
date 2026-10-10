@@ -1,3 +1,4 @@
+import { API_URL } from '../../utils/api-base.js';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ChevronDown,
@@ -27,6 +28,10 @@ export interface SidebarProps {
   folders?: string[];
   onSelectPage: (page: Page) => void;
   onCreateNewPage: (folder?: string) => void;
+  /** Opens today's daily note, creating it on first use (FR-08). */
+  onOpenDailyNote?: () => void;
+  /** Creates a note pre-filled with the structure for a page type (FR-09). */
+  onCreateFromTemplate?: (type: string) => void;
   onCreateFolder?: (folderName: string) => void;
   onMoveNoteToFolder?: (pageId: string, folderName?: string) => void;
   onDeleteFolder?: (folderName: string) => void;
@@ -50,6 +55,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   folders = [],
   onSelectPage,
   onCreateNewPage,
+  onOpenDailyNote,
+  onCreateFromTemplate,
   onCreateFolder,
   onMoveNoteToFolder,
   onDeleteFolder,
@@ -160,7 +167,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
-        const apiUrl = import.meta.env?.VITE_API_URL || 'http://localhost:3002/api';
+        const apiUrl = API_URL;
         const response = await fetch(
           `${apiUrl}/search?vaultId=${currentVault.id}&q=${encodeURIComponent(query)}`,
           { headers, signal: controller.signal },
@@ -420,6 +427,39 @@ export const Sidebar: React.FC<SidebarProps> = ({
               >
                 New folder
               </Button>
+            </div>
+          )}
+          {canEdit && (onOpenDailyNote || onCreateFromTemplate) && (
+            <div style={{ display: 'flex', gap: '6px', width: '100%', marginTop: '6px' }}>
+              {onOpenDailyNote && (
+                <Button
+                  variant="secondary"
+                  onClick={() => closeAfter(() => onOpenDailyNote())}
+                  title="Open today's daily note"
+                  style={{ flex: 1, minWidth: 0 }}
+                >
+                  Daily Note
+                </Button>
+              )}
+              {onCreateFromTemplate && (
+                <select
+                  aria-label="Create a note from a template"
+                  value=""
+                  onChange={(event) => {
+                    const type = event.target.value;
+                    if (type) closeAfter(() => onCreateFromTemplate(type));
+                  }}
+                  style={{ flex: 1, minWidth: 0 }}
+                >
+                  <option value="">From template…</option>
+                  <option value="client">Client</option>
+                  <option value="person">Person</option>
+                  <option value="project">Project</option>
+                  <option value="decision">Decision</option>
+                  <option value="meeting">Meeting</option>
+                  <option value="skill">Skill</option>
+                </select>
+              )}
             </div>
           )}
           <label className="notes-sidebar__search">

@@ -16,17 +16,20 @@ const McpConnectModal = React.lazy(() => import('./components/mcp/McpConnectModa
 const CreateVaultModal = React.lazy(() => import('./components/vault/CreateVaultModal.js').then(m => ({ default: m.CreateVaultModal })));
 const MoveToVaultModal = React.lazy(() => import('./components/vault/MoveToVaultModal.js').then(m => ({ default: m.MoveToVaultModal })));
 import { SkillItem } from './components/skills/AddSkillModal.js';
+import { API_URL } from './utils/api-base.js';
+import { Dialog, Button } from './components/ui/index.js';
+import { createSkillApi, deleteSkillApi } from './operations/skill-actions.js';
 import { loadVaultData, saveVaultLocalCache, addVaultShareApi, revokeVaultShareApi, importVaultData, deletePageApi, getAuthToken, setAuthToken, removeAuthToken } from './utils/storage.js';
 import {
   createVaultApi,
   deleteVaultApi,
+  changeVaultModeApi,
   movePageApi,
   applyPageSave,
   savePageContentApi,
   applyAiContentTransform,
   insertWikiLink,
   processImportPages,
-  buildExportZipPackage,
   triggerBlobDownload,
 } from './operations/index.js';
 import { Lock, Sparkles, Plus, Copy, Check, Terminal, ShieldCheck, FileText, Trash2 } from 'lucide-react';
@@ -129,6 +132,23 @@ const safeSkillSummary = (description: string): string => {
 export const App: React.FC = () => {
   const [isLoaded, setIsLoaded] = useState(false);
   const [ssoToken, setSsoToken] = useState<string | null>(() => getAuthToken());
+  const [serverVaultRoles, setServerVaultRoles] = useState<Record<string, VaultRole>>({});
+
+  // In-app, accessible replacements for native browser dialogs (ADR-016)
+  const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
+  const [confirmation, setConfirmation] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    resolve: (confirmed: boolean) => void;
+  } | null>(null);
+  const showNotice = (title: string, message: string) => setNotice({ title, message });
+  const requestConfirmation = (request: { title: string; message: string; confirmLabel: string }) =>
+    new Promise<boolean>((resolve) => setConfirmation({ ...request, resolve }));
+  const settleConfirmation = (confirmed: boolean) => {
+    confirmation?.resolve(confirmed);
+    setConfirmation(null);
+  };
   const [userInfo, setUserInfo] = useState<{ email: string; name: string; picture?: string } | null>(() => {
     const token = getAuthToken();
     if (token && token !== 'dev_admin_token') {
@@ -179,13 +199,17 @@ export const App: React.FC = () => {
 
   const [vaults, setVaults] = useState<Vault[]>(DEFAULT_VAULTS);
   const [currentVault, setCurrentVault] = useState<Vault>(DEFAULT_VAULTS[0]);
+  // True once the server's vault list has been applied (or could not be fetched) for the current sign-in
+  const [vaultListSettled, setVaultListSettled] = useState(false);
 
   // Fetch dynamic vaults list from API
   useEffect(() => {
+    setVaultListSettled(false);
     const fetchVaults = async () => {
       try {
         const token = ssoToken || getAuthToken();
-        const res = await fetch('http://localhost:3002/api/vaults', {
+        if (!token) return; // signed out: the server would refuse the request
+        const res = await fetch(`${API_URL}/vaults`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (res.ok) {
@@ -196,16 +220,23 @@ export const App: React.FC = () => {
               name: v.name,
               mode: v.mode,
               owner_id: v.owner_id,
-              data_key_id: v.data_key_id,
+              data_key_id: v.encrypted ? 'kms-managed' : '',
               export_policy: v.export_policy,
               created_at: new Date(v.created_at),
             }));
+            const roles: Record<string, VaultRole> = {};
+            for (const v of data.vaults) {
+              if (v.id && v.role) roles[v.id] = v.role;
+            }
+            setServerVaultRoles(roles);
             setVaults(parsedVaults);
             setCurrentVault((prev) => parsedVaults.find((pv) => pv.id === prev.id) || parsedVaults[0]);
           }
         }
       } catch (err) {
         console.warn('Failed to fetch dynamic vaults, using local defaults:', err);
+      } finally {
+        setVaultListSettled(true);
       }
     };
     fetchVaults();
@@ -307,6 +338,13 @@ export const App: React.FC = () => {
     // Initial load state
     let isCurrent = true;
     const userId = userInfo?.email || 'usr_admin';
+    if (!(ssoToken || getAuthToken())) {
+      // Signed out: nothing can be loaded, and the sign-in screen is shown instead
+      setIsLoaded(true);
+      return;
+    }
+    // Wait for the server's vault list: the placeholder vault may be one this user cannot open
+    if (!vaultListSettled) return;
     loadVaultData(currentVault.id, userId, currentVault.mode).then((savedState: any) => {
       if (!isCurrent) return;
       if (savedState) {
@@ -338,11 +376,17 @@ export const App: React.FC = () => {
     return () => {
       isCurrent = false;
     };
-  }, [userInfo?.email, currentVault.id, currentVault.mode]);
+  }, [userInfo?.email, ssoToken, vaultListSettled, currentVault.id, currentVault.mode]);
 
   const currentRole = useMemo<VaultRole | null>(() => {
     if (!userInfo?.email) return null;
     const userEmail = userInfo.email.toLowerCase().trim();
+
+    // The server-resolved role is authoritative. Consumers have no web app access (SRS 2.3).
+    const serverRole = serverVaultRoles[currentVault.id];
+    if (serverRole) {
+      return serverRole === 'consumer' ? null : serverRole;
+    }
     
     // Check direct ownership or configured owners
     const configuredOwners = (import.meta.env.VITE_VAULT_OWNER_EMAIL || 'admin@tkxel.com,mubashir.ali@camp1.tkxel.com')
@@ -368,9 +412,9 @@ export const App: React.FC = () => {
       return activeShare.role;
     }
 
-    // Default fallback based on vault mode if user has access to UI
-    return currentVault.mode === 'locked' ? 'consumer' : 'reader';
-  }, [userInfo?.email, currentVault.id, currentVault.owner_id, currentVault.mode, shares]);
+    // No resolved role: locked vaults are never browsable without one; open vaults fall back to read-only
+    return currentVault.mode === 'locked' ? null : 'reader';
+  }, [userInfo?.email, currentVault.id, currentVault.owner_id, currentVault.mode, shares, serverVaultRoles]);
 
   // Modal Dialog States
   const [isShareOpen, setIsShareOpen] = useState(false);
@@ -516,6 +560,58 @@ export const App: React.FC = () => {
     setAuditEvents((prev) => [audit, ...prev]);
   };
 
+  // Daily note and templates are created by the server (FR-08, FR-09); the page is added once it exists there
+  const adoptServerPage = (serverPage: any) => {
+    const page: Page = {
+      id: serverPage.id,
+      vault_id: serverPage.vault_id,
+      type: serverPage.type,
+      title: serverPage.title,
+      folder: serverPage.folder,
+      aliases: [],
+      tags: serverPage.tags || [],
+      content: serverPage.content || '',
+      front_matter: { title: serverPage.title, type: serverPage.type, tags: serverPage.tags || [] },
+      current_version_id: null,
+      created_at: new Date(),
+      updated_at: serverPage.updated_at ? new Date(serverPage.updated_at) : undefined,
+    };
+    setPages((prev) => (prev.some((p) => p.id === page.id) ? prev : [page, ...prev]));
+    setActivePageId(page.id);
+    setCurrentTab('editor');
+  };
+
+  const createOnServer = async (path: string, body: Record<string, unknown>, failure: string) => {
+    try {
+      const token = ssoToken || getAuthToken();
+      const res = await fetch(`${API_URL}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        showNotice(failure, 'The server did not accept the request.');
+        return;
+      }
+      adoptServerPage((await res.json()).page);
+    } catch {
+      showNotice(failure, 'The server could not be reached.');
+    }
+  };
+
+  const handleOpenDailyNote = () =>
+    createOnServer(`/vaults/${currentVault.id}/daily-note`, { date: new Date().toLocaleDateString('en-CA') }, 'Daily note not opened');
+
+  const handleCreateFromTemplate = (type: string) => {
+    const label = type.charAt(0).toUpperCase() + type.slice(1);
+    const stamp = new Date().toLocaleString('en-CA', { hour12: false }).replace(',', '');
+    return createOnServer(
+      `/vaults/${currentVault.id}/pages/from-template`,
+      { type, title: `New ${label} ${stamp}` },
+      'Note not created'
+    );
+  };
+
   const handleCreateGhostPage = (ghostTitle: string) => {
     const newId = crypto.randomUUID();
     const content = `# ${ghostTitle}\n\nInstantiated via wiki-link from [[${activePage?.title || 'Page'}]].`;
@@ -629,6 +725,7 @@ export const App: React.FC = () => {
     type: PageType;
     aliases?: string[];
     folder?: string;
+    frontMatter?: Record<string, unknown>;
   }, isDraft: boolean = true) => {
     if (!activePage) return false;
 
@@ -693,6 +790,7 @@ export const App: React.FC = () => {
           folder: updated.folder,
           tags: updated.tags,
           aliases: updated.aliases,
+          front_matter: updated.frontMatter,
         },
         isDraft,
         { token: ssoToken || getAuthToken() }
@@ -701,7 +799,7 @@ export const App: React.FC = () => {
         if (res.status === 409) {
           // Attempt automatic timestamp reconciliation if page was desynchronized
           try {
-            const apiBase = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3002/api';
+            const apiBase = API_URL;
             const pageRes = await fetch(`${apiBase}/pages/${activePage.id}?vaultId=${currentVault.id}`, {
               headers: {
                 ...(ssoToken || getAuthToken() ? { Authorization: `Bearer ${ssoToken || getAuthToken()}` } : {}),
@@ -727,6 +825,7 @@ export const App: React.FC = () => {
                     folder: updated.folder,
                     tags: updated.tags,
                     aliases: updated.aliases,
+                    front_matter: updated.frontMatter,
                   },
                   isDraft,
                   { token: ssoToken || getAuthToken() }
@@ -758,8 +857,16 @@ export const App: React.FC = () => {
         const data = await res.json();
         if (data.updated_at) {
           const freshDate = new Date(data.updated_at);
+          // Pages the server rewrote during a rename carry new timestamps; adopt them to stay in sync
+          const refactored = new Map<string, Date>(
+            (Array.isArray(data.refactored_pages) ? data.refactored_pages : []).map((r: any) => [r.id, new Date(r.updated_at)])
+          );
           setPages((prev) => {
-            const updatedWithTimestamp = prev.map((p) => p.id === activePage.id ? { ...p, updated_at: freshDate } : p);
+            const updatedWithTimestamp = prev.map((p) =>
+              p.id === activePage.id
+                ? { ...p, updated_at: freshDate }
+                : refactored.has(p.id) ? { ...p, updated_at: refactored.get(p.id)! } : p
+            );
             saveVaultLocalCache(currentVault.id, { pages: updatedWithTimestamp.filter((p) => p.vault_id === currentVault.id), links: finalLinks }, currentVault.mode);
             return updatedWithTimestamp;
           });
@@ -803,36 +910,66 @@ export const App: React.FC = () => {
     setAuditEvents((prev) => [audit, ...prev]);
   };
 
-  const handleCreateSkill = (skillData: Omit<SkillItem, 'id' | 'created_at'>) => {
-    const newSkill: SkillItem = {
-      ...skillData,
-      id: crypto.randomUUID(),
-      created_at: new Date(),
-    };
-    setLockedSkills((prev) => [newSkill, ...prev]);
+  // Skills are only added to the catalog once the server has validated, encrypted and stored them
+  const persistSkill = async (
+    vaultId: string,
+    skillData: Omit<SkillItem, 'id' | 'created_at'>
+  ): Promise<SkillItem | null> => {
+    try {
+      const stored = await createSkillApi(vaultId, skillData, { token: ssoToken || getAuthToken() || undefined });
+      // Companion files live on the server only; they are not kept in browser state
+      const { files: _uploadedFiles, ...skillWithoutFiles } = skillData;
+      return {
+        ...skillWithoutFiles,
+        id: stored.id,
+        name: stored.name,
+        version: stored.version,
+        description: stored.description,
+        runtime: stored.runtime,
+        timeout_seconds: stored.timeout_seconds,
+        tool_schema: stored.tool_schema,
+        created_at: new Date(stored.created_at),
+      };
+    } catch (err: any) {
+      showNotice('Skill not saved', `${err?.message || 'the server rejected the upload.'}`);
+      return null;
+    }
+  };
 
+  const handleCreateSkill = async (skillData: Omit<SkillItem, 'id' | 'created_at'>) => {
+    const newSkill = await persistSkill(currentVault.id, skillData);
+    if (!newSkill) return;
+    setLockedSkills((prev) => [newSkill, ...prev.filter((s) => s.id !== newSkill.id)]);
+
+    // Mirrors the audit event the server recorded for this confirmed upload
     const audit: AuditEvent = {
       id: crypto.randomUUID(),
-      actor_id: userInfo?.email || 'usr_admin',
+      actor_id: userInfo?.email || 'unknown',
       action: 'upload_skill',
       target_id: newSkill.id,
       timestamp: new Date(),
-      metadata: { name: newSkill.name, version: newSkill.version, runtime: newSkill.runtime },
+      metadata: { vault_id: currentVault.id },
     };
     setAuditEvents((prev) => [audit, ...prev]);
   };
 
-  const handleDeleteSkill = (skillId: string) => {
-    const skill = lockedSkills.find((s) => s.id === skillId);
+  const handleDeleteSkill = async (skillId: string) => {
+    try {
+      await deleteSkillApi(currentVault.id, skillId, { token: ssoToken || getAuthToken() || undefined });
+    } catch (err: any) {
+      showNotice('Skill not deleted', `${err?.message || 'the server rejected the request.'}`);
+      return;
+    }
     setLockedSkills((prev) => prev.filter((s) => s.id !== skillId));
 
+    // Mirrors the audit event the server recorded for this confirmed deletion
     const audit: AuditEvent = {
       id: crypto.randomUUID(),
-      actor_id: userInfo?.email || 'usr_admin',
+      actor_id: userInfo?.email || 'unknown',
       action: 'delete_skill',
       target_id: skillId,
       timestamp: new Date(),
-      metadata: { name: skill?.name || 'Unknown Skill' },
+      metadata: { vault_id: currentVault.id },
     };
     setAuditEvents((prev) => [audit, ...prev]);
   };
@@ -871,7 +1008,7 @@ export const App: React.FC = () => {
     setIsConvertToSkillOpen(true);
   };
 
-  const handleConvertNoteToSkill = ({
+  const handleConvertNoteToSkill = async ({
     targetVaultId,
     skill,
     deleteOriginalNote,
@@ -880,29 +1017,11 @@ export const App: React.FC = () => {
     skill: Omit<SkillItem, 'id' | 'created_at'>;
     deleteOriginalNote: boolean;
   }) => {
-    const newSkill: SkillItem = {
-      ...skill,
-      id: crypto.randomUUID(),
-      created_at: new Date(),
-    };
-    setLockedSkills((prev) => [newSkill, ...prev]);
-
-    const audit: AuditEvent = {
-      id: crypto.randomUUID(),
-      actor_id: userInfo?.email || 'admin@tkxel.com',
-      action: 'upload_skill',
-      target_id: newSkill.id,
-      timestamp: new Date(),
-      metadata: {
-        operation: 'promote_note_to_skill',
-        source_note_id: noteToConvert?.id,
-        source_note_title: noteToConvert?.title,
-        skill_name: newSkill.name,
-        target_vault_id: targetVaultId,
-        deleted_original: deleteOriginalNote,
-      },
-    };
-    setAuditEvents((prev) => [audit, ...prev]);
+    const newSkill = await persistSkill(targetVaultId, skill);
+    if (!newSkill) return;
+    if (targetVaultId === currentVault.id) {
+      setLockedSkills((prev) => [newSkill, ...prev.filter((s) => s.id !== newSkill.id)]);
+    }
 
     if (deleteOriginalNote && noteToConvert) {
       handleDeletePage(noteToConvert.id);
@@ -919,6 +1038,48 @@ export const App: React.FC = () => {
     const newVault = await createVaultApi(data, { token });
     setVaults((prev) => [...prev, newVault]);
     setCurrentVault(newVault);
+  };
+
+  // Mode is changed on the server (FR-51); the UI follows only after it confirms
+  const handleReindexVault = async () => {
+    const confirmed = await requestConfirmation({
+      title: 'Rebuild search index?',
+      message: `Search for "${currentVault.name}" is rebuilt from the vault's current pages. This can take a while for a large vault.`,
+      confirmLabel: 'Rebuild',
+    });
+    if (!confirmed) return;
+    try {
+      const token = ssoToken || getAuthToken();
+      const res = await fetch(`${API_URL}/vaults/${currentVault.id}/reindex`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.ok) showNotice('Search index rebuilt', 'Search now reflects the current pages of this vault.');
+      else showNotice('Search index not rebuilt', 'The server did not accept the request.');
+    } catch {
+      showNotice('Search index not rebuilt', 'The server could not be reached.');
+    }
+  };
+
+  const handleChangeVaultMode = async (vault: Vault) => {
+    const nextMode = vault.mode === 'open' ? 'locked' : 'open';
+    const confirmed = await requestConfirmation({
+      title: nextMode === 'locked' ? `Lock "${vault.name}"?` : `Open "${vault.name}"?`,
+      message: nextMode === 'locked'
+        ? 'Its content becomes use-only: no reading, search, graph or export. Reader access is revoked.'
+        : 'Its content becomes readable and searchable by Readers you share it with. Consumer access is revoked.',
+      confirmLabel: nextMode === 'locked' ? 'Lock vault' : 'Open vault',
+    });
+    if (!confirmed) return;
+    try {
+      const result = await changeVaultModeApi(vault.id, nextMode, { token: ssoToken || getAuthToken() || undefined });
+      const apply = (v: Vault): Vault =>
+        v.id === vault.id ? { ...v, mode: result.mode, export_policy: result.export_policy as Vault['export_policy'] } : v;
+      setVaults((prev) => prev.map(apply));
+      setCurrentVault((prev) => apply(prev));
+    } catch (err: any) {
+      showNotice('Vault mode not changed', `${err?.message === 'not_allowed' ? 'only the vault Owner can do this.' : err?.message || 'request failed.'}`);
+    }
   };
 
   const handleDeleteVault = async (vaultId: string) => {
@@ -962,17 +1123,32 @@ export const App: React.FC = () => {
     setPageToMove(null);
   };
 
-  const handleAddTimelineEntry = (text: string) => {
+  // Timeline entries are appended on the server (encrypted, append-only) and shown once confirmed
+  const handleAddTimelineEntry = async (text: string) => {
     if (!activePage) return;
-    const entry: TimelineEntry = {
-      id: crypto.randomUUID(),
-      page_id: activePage.id,
-      date: new Date().toISOString().slice(0, 10),
-      entry_text: text,
-      created_by: userInfo?.email || 'usr_admin',
-      created_at: new Date(),
-    };
-    setTimelineEntries([...timelineEntries, entry]);
+    try {
+      const token = ssoToken || getAuthToken();
+      const res = await fetch(`${API_URL}/pages/${activePage.id}/timeline`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ entry: text, date: new Date().toISOString().slice(0, 10) }),
+      });
+      if (!res.ok) {
+        showNotice(
+          'Timeline entry not saved',
+          res.status === 404 ? 'Save this note first, then add timeline entries.' : 'The server rejected the entry.'
+        );
+        return;
+      }
+      const data = await res.json();
+      const entry: TimelineEntry = { ...data.entry, created_at: new Date(data.entry.created_at) };
+      setTimelineEntries((prev) => [...prev, entry]);
+    } catch (err) {
+      showNotice('Timeline entry not saved', 'The server could not be reached.');
+    }
   };
 
   // Bulk Ingestion with link registration and audit event (DEF-07)
@@ -1025,47 +1201,74 @@ export const App: React.FC = () => {
     }
   };
 
-  // Real JSZip Packaging & Download (DEF-01)
+  // Export is produced and audited by the server (FR-56); the browser only downloads the archive
   const handleConfirmExport = async (justification: string) => {
-    const { zip, fileCount } = await buildExportZipPackage(pages, currentVault.id);
-    const blob = await zip.generateAsync({ type: 'blob' });
-    triggerBlobDownload(blob, `${currentVault.name.toLowerCase().replace(/\s+/g, '-')}-notes.zip`);
-
-    // Audit Event
-    const audit: AuditEvent = {
-      id: crypto.randomUUID(),
-      actor_id: userInfo?.email || 'usr_admin',
-      action: 'export_open_vault',
-      target_id: currentVault.id,
-      timestamp: new Date(),
-      metadata: { justification, pageCount: fileCount, format: 'zip' },
-    };
-    setAuditEvents((prev) => [audit, ...prev]);
-    setIsExportOpen(false);
+    try {
+      const token = ssoToken || getAuthToken();
+      const res = await fetch(`${API_URL}/vaults/${currentVault.id}/export`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ justification }),
+      });
+      if (!res.ok) {
+        showNotice('Export refused', 'Only the Owner of an open vault can export it. Locked vaults can never be exported.');
+        return;
+      }
+      const blob = await res.blob();
+      triggerBlobDownload(blob, `tkxel-vault-${currentVault.name.replace(/[^a-z0-9-_ ]/gi, '_')}-${new Date().toISOString().slice(0, 10)}.zip`);
+      setIsExportOpen(false);
+    } catch (err) {
+      showNotice('Export failed', 'The server could not be reached.');
+    }
   };
 
-  // Real CSV Compilation & Download (DEF-02)
-  const handleExportCsv = () => {
-    const headers = ['ID', 'Actor ID', 'Action', 'Target ID', 'Timestamp', 'Metadata'];
-    const rows = auditEvents.map((evt) => [
-      evt.id,
-      evt.actor_id,
-      evt.action,
-      evt.target_id,
-      new Date(evt.timestamp).toISOString(),
-      JSON.stringify(evt.metadata || {}).replace(/"/g, '""'),
-    ]);
+  // The audit trail shown and exported is the server's append-only record (FR-82), never browser state
+  const refreshAuditEvents = async () => {
+    if (currentRole !== 'owner') return;
+    try {
+      const token = ssoToken || getAuthToken();
+      const res = await fetch(`${API_URL}/vaults/${currentVault.id}/audits?limit=1000`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setAuditEvents((data.auditEvents || []).map((a: any) => ({ ...a, timestamp: new Date(a.timestamp) })));
+    } catch (err) {
+      console.warn('Failed to refresh audit trail:', err);
+    }
+  };
 
-    const csvContent = [headers.join(','), ...rows.map((r) => r.map((cell) => `"${cell}"`).join(','))].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const downloadUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = downloadUrl;
-    a.download = `tkxel-vault-audit-trail-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(downloadUrl);
+  useEffect(() => {
+    if (currentTab === 'audit') {
+      void refreshAuditEvents();
+    }
+  }, [currentTab, currentVault.id, currentRole]);
+
+  const handleExportCsv = async () => {
+    try {
+      const token = ssoToken || getAuthToken();
+      const res = await fetch(`${API_URL}/vaults/${currentVault.id}/audits?format=csv`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        showNotice('Audit export refused', 'Only the vault Owner can export the audit trail.');
+        return;
+      }
+      const blob = await res.blob();
+      const downloadUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = `tkxel-vault-audit-trail-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(downloadUrl);
+    } catch (err) {
+      showNotice('Audit export failed', 'The server could not be reached.');
+    }
   };
 
   const isLocked = currentVault.mode === 'locked';
@@ -1080,6 +1283,8 @@ export const App: React.FC = () => {
   }
 
   const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || 'dummy_client_id';
+  // Local dev login is compiled out of production builds and needs an explicit opt-in flag
+  const devAuthBypassEnabled = import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEV_AUTH_BYPASS === 'true';
 
   if (!ssoToken) {
     return (
@@ -1149,6 +1354,7 @@ export const App: React.FC = () => {
             </div>
 
             {/* Local Developer / Quick Admin Access */}
+            {devAuthBypassEnabled && (<>
             <div style={{ margin: '20px 0 16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
               <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--border-subtle)' }} />
               <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 700 }}>OR</span>
@@ -1170,6 +1376,7 @@ export const App: React.FC = () => {
             >
               Continue as Workspace Administrator (Local Dev)
             </button>
+            </>)}
           </div>
         </div>
       </GoogleOAuthProvider>
@@ -1186,7 +1393,7 @@ export const App: React.FC = () => {
             Your account ({userInfo?.email}) does not have access to this Vault. Please ask the Vault Administrator to grant you access via the Share menu.
           </p>
           <div style={{ display: 'flex', gap: '10px' }}>
-            <button 
+            {devAuthBypassEnabled && (<button 
               className="btn btn-primary-blue"
               style={{ padding: '8px 16px', fontSize: '0.82rem' }}
               onClick={() => {
@@ -1200,7 +1407,7 @@ export const App: React.FC = () => {
               }}
             >
               Switch to Workspace Administrator
-            </button>
+            </button>)}
             <button 
               className="btn btn-secondary-white"
               style={{ padding: '8px 16px', fontSize: '0.82rem' }}
@@ -1233,10 +1440,12 @@ export const App: React.FC = () => {
       onCloseNavigation={() => setIsNavigationOpen(false)}
       onSelectVault={handleSelectVault}
       onDeleteVault={handleDeleteVault}
+      onChangeVaultMode={handleChangeVaultMode}
       onSelectTab={setCurrentTab}
       onOpenShareModal={() => setIsShareOpen(true)}
       onOpenExportModal={() => setIsExportOpen(true)}
       onOpenImportModal={() => setIsImportOpen(true)}
+      onReindexVault={handleReindexVault}
       onOpenMcpModal={() => setIsMcpOpen(true)}
       onOpenCreateVault={() => setIsCreateVaultOpen(true)}
       onLogout={() => {
@@ -1304,6 +1513,8 @@ export const App: React.FC = () => {
         folders={allFolders}
         onSelectPage={(p) => setActivePageId(p.id)}
         onCreateNewPage={handleCreateNewPage}
+        onOpenDailyNote={handleOpenDailyNote}
+        onCreateFromTemplate={handleCreateFromTemplate}
         onCreateFolder={handleCreateFolder}
         onMoveNoteToFolder={handleMoveNoteToFolder}
         onDeleteFolder={handleDeleteFolder}
@@ -1803,6 +2014,27 @@ export const App: React.FC = () => {
           onMovePage={handleMovePageToVault}
         />
       </Suspense>
+      <Dialog
+        open={Boolean(notice)}
+        title={notice?.title || ''}
+        onClose={() => setNotice(null)}
+        footer={<Button variant="primary" onClick={() => setNotice(null)}>OK</Button>}
+      >
+        <p style={{ margin: 0 }}>{notice?.message}</p>
+      </Dialog>
+      <Dialog
+        open={Boolean(confirmation)}
+        title={confirmation?.title || ''}
+        onClose={() => settleConfirmation(false)}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => settleConfirmation(false)}>Cancel</Button>
+            <Button variant="primary" onClick={() => settleConfirmation(true)}>{confirmation?.confirmLabel}</Button>
+          </>
+        }
+      >
+        <p style={{ margin: 0 }}>{confirmation?.message}</p>
+      </Dialog>
     </AppShell>
     </GoogleOAuthProvider>
   );

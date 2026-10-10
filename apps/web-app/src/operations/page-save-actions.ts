@@ -2,6 +2,7 @@ import { Page, PageType } from '@tkxel-vault/types';
 import { MarkdownEngine } from '@tkxel-vault/vault-core/markdown';
 import { resolveOutgoingLinks } from './wiki-link-actions.js';
 import { ApiRequestOptions } from './vault-actions.js';
+import { API_ORIGIN } from '../utils/api-base.js';
 
 export interface PageSavePayload {
   title: string;
@@ -10,6 +11,8 @@ export interface PageSavePayload {
   type: PageType;
   aliases?: string[];
   folder?: string;
+  /** User-defined front matter fields (everything except the reserved keys). Replaces the previous set. */
+  frontMatter?: Record<string, unknown>;
 }
 
 export interface ApplyPageSaveResult {
@@ -88,7 +91,8 @@ export function applyPageSave(params: {
         tags: updated.tags,
         aliases: updated.aliases || p.aliases || [],
         front_matter: {
-          ...cleanFrontMatter,
+          // When the editor supplies custom fields they replace the old custom set; reserved keys follow below
+          ...(updated.frontMatter ? updated.frontMatter : cleanFrontMatter),
           title: newTitle,
           type: updated.type,
           folder: updated.folder,
@@ -126,6 +130,7 @@ export interface SavePageApiPayload {
   folder?: string;
   tags?: string[];
   aliases?: string[];
+  front_matter?: Record<string, unknown>;
 }
 
 export async function savePageContentApi(
@@ -134,7 +139,7 @@ export async function savePageContentApi(
   isDraft: boolean,
   options?: ApiRequestOptions
 ): Promise<Response> {
-  const baseUrl = options?.baseUrl || 'http://localhost:3002';
+  const baseUrl = options?.baseUrl || API_ORIGIN;
   const fetchFn = options?.fetchImpl || fetch;
   const token = options?.token;
   const endpoint = isDraft ? 'draft' : 'publish';

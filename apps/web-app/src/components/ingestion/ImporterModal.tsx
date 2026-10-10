@@ -18,6 +18,8 @@ export const ImporterModal: React.FC<ImporterModalProps> = ({
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pastedTitle, setPastedTitle] = useState('');
+  const [pastedText, setPastedText] = useState('');
   const dialogRef = useModalAccessibility<HTMLDivElement>(isOpen, onClose);
 
   if (!isOpen) return null;
@@ -77,6 +79,21 @@ export const ImporterModal: React.FC<ImporterModalProps> = ({
       setError(e?.message || 'Failed to process import files.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Pasted Markdown goes through the same importer as an uploaded file, so front matter, tags and
+  // [[wiki-links]] are kept exactly as they would be for a .md file
+  const handlePastedMarkdown = () => {
+    const text = pastedText.trim();
+    if (!text) return;
+    setError(null);
+    try {
+      const heading = /^#\s+(.+)$/m.exec(text)?.[1]?.trim();
+      const name = (pastedTitle.trim() || heading || 'Pasted note').replace(/[\\/:*?"<>|]/g, ' ').trim() || 'Pasted note';
+      setImportResult(new MarkdownImporter().importFromMap(new Map([[`${name}.md`, pastedText]])));
+    } catch (e: any) {
+      setError(e?.message || 'The pasted Markdown could not be read.');
     }
   };
 
@@ -184,6 +201,34 @@ export const ImporterModal: React.FC<ImporterModalProps> = ({
             Supports .md files, Obsidian .zip archives, and JSZip skill bundles
           </div>
         </div>
+
+        <details>
+          <summary style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', cursor: 'pointer' }}>
+            Or paste Markdown
+          </summary>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+            <input
+              type="text"
+              aria-label="Title for the pasted note"
+              placeholder="Note title (optional: the first heading is used otherwise)"
+              value={pastedTitle}
+              onChange={(e) => setPastedTitle(e.target.value)}
+              style={{ padding: '6px 8px', fontSize: '0.82rem' }}
+            />
+            <textarea
+              aria-label="Markdown to import"
+              placeholder="Paste Markdown here, including any front matter and [[wiki-links]]"
+              rows={6}
+              spellCheck={false}
+              value={pastedText}
+              onChange={(e) => setPastedText(e.target.value)}
+              style={{ padding: '6px 8px', fontSize: '0.8rem', fontFamily: 'ui-monospace, monospace', resize: 'vertical' }}
+            />
+            <button type="button" className="btn btn-ghost" disabled={!pastedText.trim()} onClick={handlePastedMarkdown} style={{ alignSelf: 'flex-start' }}>
+              Use pasted Markdown
+            </button>
+          </div>
+        </details>
 
         {error && (
           <div

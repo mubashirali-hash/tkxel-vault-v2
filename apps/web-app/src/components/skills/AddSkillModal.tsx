@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Sparkles, X, ShieldCheck, Code, AlertCircle, UploadCloud, FileArchive, CheckCircle2, HelpCircle } from 'lucide-react';
 import JSZip from 'jszip';
+import { companionFilePaths } from '../../operations/skill-actions.js';
 import YAML from 'yaml';
 import { useModalAccessibility } from '../ui/useModalAccessibility.js';
 import { NotesAiClient } from '../../features/notes-ai/ai-client.js';
@@ -15,6 +16,8 @@ export interface SkillItem {
   timeout_seconds: number;
   system_instructions?: string;
   tool_schema?: string;
+  /** Companion files from an uploaded bundle. Sent to the server with the skill, never kept in the browser. */
+  files?: Record<string, string>;
   created_at: Date;
 }
 
@@ -174,6 +177,13 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
         extractedSchema = await toolJsonFile.async('string');
       }
 
+      // Helper scripts and templates that ship with the skill are uploaded with it; the server
+      // validates and scans each one before anything is stored
+      const companionFiles: Record<string, string> = {};
+      for (const { zipPath, relativePath } of companionFilePaths(Object.keys(zip.files), skillMdFile.name, toolJsonFile?.name)) {
+        companionFiles[relativePath] = await zip.files[zipPath].async('string');
+      }
+
       setParsedSkill({
         name: parsedName,
         version: frontmatter.version || 'v1.0',
@@ -181,7 +191,8 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
         runtime: frontmatter.runtime || 'Python 3.12 Sandboxed',
         timeout_seconds: frontmatter.timeout_seconds || 120,
         system_instructions: body,
-        tool_schema: extractedSchema
+        tool_schema: extractedSchema,
+        files: companionFiles,
       });
 
     } catch (err: any) {

@@ -179,6 +179,7 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedType, setSelectedType] = useState('all');
+  const [selectedTag, setSelectedTag] = useState('all');
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
 
@@ -195,6 +196,7 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
   const selectedNodeRef = useRef<GraphNode | null>(null);
   const searchQueryRef = useRef<string>('');
   const selectedTypeRef = useRef<string>('all');
+  const selectedTagRef = useRef<string>('all');
   const connectingSourceRef = useRef<GraphNode | null>(null);
   const connectingMousePosRef = useRef<{ x: number; y: number } | null>(null);
   const viewModeRef = useRef<'2d' | '3d'>('2d');
@@ -229,6 +231,11 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
     selectedTypeRef.current = selectedType;
     drawRef.current?.();
   }, [selectedType]);
+
+  useEffect(() => {
+    selectedTagRef.current = selectedTag;
+    drawRef.current?.();
+  }, [selectedTag]);
 
   useEffect(() => {
     selectedNodeRef.current = selectedNode;
@@ -494,6 +501,7 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
       const currentSelected = selectedNodeRef.current;
       const currentQuery = searchQueryRef.current.toLowerCase();
       const currentType = selectedTypeRef.current;
+      const currentTag = selectedTagRef.current;
       const currentDensity = labelDensityRef.current;
       const currentConnectingSrc = connectingSourceRef.current;
       const currentConnectingPos = connectingMousePosRef.current;
@@ -581,7 +589,8 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
 
         const isMatch =
           (!currentQuery || humanizeNodeTitle(node.title).toLowerCase().includes(currentQuery)) &&
-          (currentType === 'all' || node.type === currentType);
+          (currentType === 'all' || node.type === currentType) &&
+          (currentTag === 'all' || (node.tags || []).includes(currentTag));
 
         const isHovered = currentHovered?.id === node.id;
         const isSelected = currentSelected?.id === node.id;
@@ -692,6 +701,7 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
       const currentSelected = selectedNodeRef.current;
       const currentQuery = searchQueryRef.current.toLowerCase();
       const currentType = selectedTypeRef.current;
+      const currentTag = selectedTagRef.current;
       const currentDensity = labelDensityRef.current;
 
       const selectedNeighborIds = new Set<string>();
@@ -886,7 +896,8 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
       sortedNodes.forEach((node) => {
         const isMatch =
           (!currentQuery || humanizeNodeTitle(node.title).toLowerCase().includes(currentQuery)) &&
-          (currentType === 'all' || node.type === currentType);
+          (currentType === 'all' || node.type === currentType) &&
+          (currentTag === 'all' || (node.tags || []).includes(currentTag));
 
         const isHovered = currentHovered?.id === node.id;
         const isSelected = currentSelected?.id === node.id;
@@ -1489,6 +1500,7 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
   }, [connectingSource, selectedNode, hoveredNode, showToast]);
 
   const availableCategories = Array.from(new Set(pages.map((p) => p.type || 'note')));
+  const availableTags = Array.from(new Set(pages.flatMap((p) => p.tags || []))).sort((a, b) => a.localeCompare(b));
 
   const candidateTargets = connectingSource
     ? pages.filter((p) => p.id !== connectingSource.id && (!connectSearchQuery || humanizeNodeTitle(p.title).toLowerCase().includes(connectSearchQuery.toLowerCase())))
@@ -1497,6 +1509,7 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
   const filteredPages = pages.filter((page) =>
     (!searchQuery || humanizeNodeTitle(page.title).toLowerCase().includes(searchQuery.toLowerCase()))
     && (selectedType === 'all' || page.type === selectedType)
+    && (selectedTag === 'all' || (page.tags || []).includes(selectedTag))
   );
 
   const selectedPage = selectedNode ? allPages.find((page) => page.id === selectedNode.id) : undefined;
@@ -1523,6 +1536,9 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
         onSearchChange={setSearchQuery}
         selectedType={selectedType}
         onTypeSelect={setSelectedType}
+        selectedTag={selectedTag}
+        onTagSelect={setSelectedTag}
+        availableTags={availableTags}
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
         onReset={handleReset}

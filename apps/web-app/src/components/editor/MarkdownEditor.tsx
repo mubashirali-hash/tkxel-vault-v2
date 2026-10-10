@@ -1,3 +1,5 @@
+import { getEditorMarkdown } from '../../utils/editor-markdown.js';
+import { extractCustomFields } from '../../utils/front-matter-fields.js';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Save,
@@ -18,6 +20,7 @@ import {
   Heading2,
   ListTodo,
   Table as TableIcon,
+  Image as ImageIcon,
   AlertTriangle,
 } from 'lucide-react';
 import { useEditor, EditorContent } from '@tiptap/react';
@@ -26,12 +29,14 @@ import { Table, TableRow, TableHeader, TableCell } from '@tiptap/extension-table
 import { Markdown } from 'tiptap-markdown';
 import Placeholder from '@tiptap/extension-placeholder';
 import { Page, PageType, TimelineEntry, VaultRole } from '@tkxel-vault/types';
-import { WikiLinkPicker } from './WikiLinkPicker.js';
+import { WikiLinkPicker, formatLinkTarget } from './WikiLinkPicker.js';
 import { DiffViewer } from './DiffViewer.js';
 import { NotesAiDrawer } from '../../features/notes-ai/NotesAiDrawer.js';
 import { ActionMenu, Button, Dialog } from '../ui/index.js';
 import { NoteInspector } from './NoteInspector.js';
 import { CustomCodeBlock } from './CodeBlockComponent.js';
+import { VaultImage, uploadVaultImage, ACCEPTED_IMAGE_TYPES } from './VaultImage.js';
+import { UnresolvedLinks, unresolvedLinksKey } from './UnresolvedLinks.js';
 import { SmartLinkBanner } from './SmartLinkBanner.js';
 import { NotesAiClient } from '../../features/notes-ai/ai-client.js';
 import { SuggestedLink } from '../../features/notes-ai/types.js';
@@ -46,7 +51,7 @@ export interface MarkdownEditorProps {
   currentRole: VaultRole;
   isOpenVault?: boolean;
   folders?: string[];
-  onSave: (updated: { title: string; content: string; tags: string[]; type: PageType; aliases?: string[]; folder?: string }, isDraft?: boolean) => Promise<boolean | void> | void;
+  onSave: (updated: { title: string; content: string; tags: string[]; type: PageType; aliases?: string[]; folder?: string; frontMatter?: Record<string, unknown> }, isDraft?: boolean) => Promise<boolean | void> | void;
   onDelete?: () => void;
   onOpenConvertToSkill?: () => void;
   onOpenMoveToVault?: () => void;
@@ -89,6 +94,10 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   const [tags, setTags] = useState<string[]>(page.tags);
   const [aliases, setAliases] = useState<string[]>(page.aliases || []);
   const [pageType, setPageType] = useState<PageType>(page.type);
+  const [customFields, setCustomFields] = useState<Record<string, unknown>>(() => extractCustomFields(page.front_matter));
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const insertImageFileRef = useRef<(file: File) => Promise<void>>(async () => {});
   const [savedFeedback, setSavedFeedback] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [isOnline, setIsOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine);
@@ -120,6 +129,9 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   const isDirtyRef = useRef(false);
   const activePageIdRef = useRef(page.id);
   const isSavingRef = useRef(false);
+  // Markdown of the note as loaded or last saved. An editor update that still produces exactly this
+  // Markdown is not an edit (TipTap normalises the document on the first transaction after loading).
+  const baselineMarkdownRef = useRef<string | null>(null);
   const pendingSaveRef = useRef<{ isDraft: boolean; isAuto: boolean } | null>(null);
 
   isDirtyRef.current = isDirty;
@@ -132,6 +144,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     aliases,
     type: pageType,
     folder,
+    frontMatter: customFields,
   });
   latestDocRef.current = {
     title,
@@ -140,6 +153,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     aliases,
     type: pageType,
     folder,
+    frontMatter: customFields,
   };
 
   // Synchronize with global AI plugin toggle
@@ -193,7 +207,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     });
     if (res.count > 0 && editor && !editor.isDestroyed) {
       editor.commands.setContent(res.modifiedContent);
-      const md = (editor.storage as any).markdown.getMarkdown();
+      const md = getEditorMarkdown(editor);
       setContent(md);
       setIsDirty(true);
     }
@@ -208,7 +222,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     });
     if (res.count > 0 && editor && !editor.isDestroyed) {
       editor.commands.setContent(res.modifiedContent);
-      const md = (editor.storage as any).markdown.getMarkdown();
+      const md = getEditorMarkdown(editor);
       setContent(md);
       setIsDirty(true);
     }
@@ -226,7 +240,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
       });
       if (res.count > 0 && editor && !editor.isDestroyed) {
         editor.commands.setContent(res.modifiedContent);
-        const md = (editor.storage as any).markdown.getMarkdown();
+        const md = getEditorMarkdown(editor);
         setContent(md);
         setIsDirty(true);
       }
@@ -243,7 +257,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
 
     if (editor && !editor.isDestroyed) {
       editor.commands.insertContent(` ${linkSyntax} `);
-      const md = (editor.storage as any).markdown.getMarkdown();
+      const md = getEditorMarkdown(editor);
       setContent(md);
       if (editor.isFocused) setIsDirty(true);
     } else {
@@ -267,7 +281,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   const handleInsertAiSummary = (summaryMarkdown: string) => {
     if (editor && !editor.isDestroyed) {
       editor.commands.insertContent(summaryMarkdown);
-      const md = (editor.storage as any).markdown.getMarkdown();
+      const md = getEditorMarkdown(editor);
       setContent(md);
     } else {
       setContent((prev) => `${prev}${summaryMarkdown}`);
@@ -350,8 +364,26 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     }
   };
 
-  const defaultCategories = ['note', 'decision', 'meeting', 'project', 'client', 'person'];
+  insertImageFileRef.current = async (file: File) => {
+    if (!canEdit || !editor || editor.isDestroyed) return;
+    setImageError(null);
+    try {
+      const src = await uploadVaultImage(page.vault_id, file);
+      editor.chain().focus().setImage({ src, alt: file.name.replace(/\.[^.]+$/, '') }).run();
+    } catch (err: any) {
+      setImageError(err?.message || 'The image could not be saved.');
+    }
+  };
+
+  const defaultCategories = ['note', 'person', 'client', 'project', 'decision', 'meeting', 'skill', 'other'];
   const allKnownCategories = Array.from(new Set(availablePages.map((p) => p.type).concat(defaultCategories)));
+
+  // Titles and aliases that a [[wiki-link]] can resolve to, kept in a ref so the editor reads the current list
+  const knownLinkTargetsRef = useRef<Set<string>>(new Set());
+  knownLinkTargetsRef.current = new Set(
+    availablePages.flatMap((p) => [p.title, ...(p.aliases || [])]).map((value) => value.toLowerCase())
+  );
+  const knownLinkTargetsSignature = Array.from(knownLinkTargetsRef.current).sort().join('\n');
 
   // Setup TipTap Live WYSIWYG Editor with In-Place Tables and Mermaid CustomCodeBlock
   const editor = useEditor({
@@ -361,6 +393,8 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
         codeBlock: false,
       }),
       CustomCodeBlock,
+      VaultImage.configure({ inline: false, allowBase64: false }),
+      UnresolvedLinks.configure({ isResolved: (linkTitle) => knownLinkTargetsRef.current.has(linkTitle.toLowerCase()) }),
       Table.configure({
         resizable: true,
       }),
@@ -383,17 +417,43 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
         'aria-label': 'Document Markdown Editor',
         role: 'textbox',
       },
+      // Pasted or dropped image files are stored in the vault and inserted by reference (FR-02)
+      handlePaste: (_view, event) => {
+        const file = Array.from(event.clipboardData?.files || []).find((f) => ACCEPTED_IMAGE_TYPES.includes(f.type));
+        if (!file) return false;
+        event.preventDefault();
+        void insertImageFileRef.current(file);
+        return true;
+      },
+      handleDrop: (_view, event) => {
+        const file = Array.from((event as DragEvent).dataTransfer?.files || []).find((f) => ACCEPTED_IMAGE_TYPES.includes(f.type));
+        if (!file) return false;
+        event.preventDefault();
+        void insertImageFileRef.current(file);
+        return true;
+      },
+    },
+    onCreate: ({ editor }) => {
+      baselineMarkdownRef.current = getEditorMarkdown(editor);
     },
     onUpdate: ({ editor }) => {
-      const md = (editor.storage as any).markdown.getMarkdown();
+      const md = getEditorMarkdown(editor);
       setContent(md);
-      setIsDirty(true);
+      if (md !== baselineMarkdownRef.current || isDirtyRef.current) setIsDirty(true);
       checkAndPositionPicker(editor);
     },
     onSelectionUpdate: ({ editor }) => {
       checkAndPositionPicker(editor);
     },
   });
+
+  // Re-check which links are unresolved when pages are created, renamed or removed. The transaction
+  // carries no document change, so it does not mark the note as edited.
+  useEffect(() => {
+    if (editor && !editor.isDestroyed) {
+      editor.view.dispatch(editor.state.tr.setMeta(unresolvedLinksKey, true).setMeta('preventUpdate', true));
+    }
+  }, [knownLinkTargetsSignature, editor]);
 
   // Sync state if active page changes
   useEffect(() => {
@@ -414,6 +474,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
       setTags(page.tags);
       setAliases(page.aliases || []);
       setPageType(page.type);
+      setCustomFields(extractCustomFields(page.front_matter));
       setIsDirty(false);
       isDirtyRef.current = false;
       setIsAutoSaving(false);
@@ -425,6 +486,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
         queueMicrotask(() => {
           if (editor && !editor.isDestroyed) {
             editor.commands.setContent(newBody, { emitUpdate: false });
+            baselineMarkdownRef.current = getEditorMarkdown(editor);
           }
         });
       }
@@ -436,7 +498,9 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     if (editor && !editor.isDestroyed) {
       queueMicrotask(() => {
         if (editor && !editor.isDestroyed) {
-          editor.setEditable(canEdit);
+          // Without the second argument TipTap reports an update, which marked every opened note
+          // as edited and autosaved an unchanged draft
+          editor.setEditable(canEdit, false);
         }
       });
     }
@@ -452,7 +516,9 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     };
   }, []);
 
-  const handleSelectWikiLink = (linkTitle: string) => {
+  const handleSelectWikiLink = (linkTitle: string, relation?: string) => {
+    // A plain link is [[Title]]; a typed link is [[relation::Title]] (FR-15)
+    const linkText = relation ? `[[${formatLinkTarget(linkTitle, relation)}]]` : `[[${linkTitle}]]`;
     if (editor && !editor.isDestroyed) {
       const { from } = editor.state.selection;
       const textBefore = editor.state.doc.textBetween(Math.max(0, from - 50), from, ' ');
@@ -463,10 +529,10 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
           .chain()
           .focus()
           .deleteRange({ from: from - deleteCount, to: from })
-          .insertContent(`[[${linkTitle}]] `)
+          .insertContent(`${linkText} `)
           .run();
       } else {
-        editor.chain().focus().insertContent(`[[${linkTitle}]] `).run();
+        editor.chain().focus().insertContent(`${linkText} `).run();
       }
     }
     const isKnown = availablePages.some(
@@ -487,7 +553,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   const handleInsertTemplate = (markdown: string) => {
     if (!editor || editor.isDestroyed) return;
     editor.chain().focus().insertContent(markdown).run();
-    setContent((editor.storage as any).markdown.getMarkdown());
+    setContent(getEditorMarkdown(editor));
     setIsDirty(true);
   };
 
@@ -498,7 +564,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
       return;
     }
     isSavingRef.current = true;
-    const currentMd = editor && !editor.isDestroyed ? (editor.storage as any).markdown.getMarkdown() : latestDocRef.current.content;
+    const currentMd = editor && !editor.isDestroyed ? getEditorMarkdown(editor) : latestDocRef.current.content;
     const dataToSave = {
       ...latestDocRef.current,
       content: currentMd,
@@ -516,6 +582,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
         setSyncError(false);
         setLastSavedAt(new Date());
         saveSuccess = true;
+        baselineMarkdownRef.current = currentMd;
       }
     } catch {
       setSyncError(true);
@@ -720,10 +787,12 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
                   <Save size={14} />
                   Save Draft
                 </button>
-                <button disabled={!isOnline} onClick={() => handleSaveDocument(false, false)} className="btn btn-primary-blue" style={{ padding: '4px 14px', fontSize: '0.78rem', height: '30px' }}>
-                  <Check size={14} />
-                  Publish
-                </button>
+                {currentRole === 'owner' && (
+                  <button disabled={!isOnline} onClick={() => handleSaveDocument(false, false)} className="btn btn-primary-blue" style={{ padding: '4px 14px', fontSize: '0.78rem', height: '30px' }}>
+                    <Check size={14} />
+                    Publish
+                  </button>
+                )}
                 {isAiEnabled && (
                   <button
                     onClick={() => {
@@ -979,6 +1048,34 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
             <TableIcon size={13} />
             <span style={{ fontSize: '0.74rem' }}>Table</span>
           </button>
+          {canEdit && (
+            <>
+              <button
+                onClick={() => imageInputRef.current?.click()}
+                className="btn btn-ghost"
+                style={{ padding: '4px 6px', color: 'inherit', gap: '4px' }}
+                title="Insert image (PNG, JPEG, GIF or WebP, up to 5 MB). Stored encrypted in this vault."
+              >
+                <ImageIcon size={13} />
+                <span style={{ fontSize: '0.74rem' }}>Image</span>
+              </button>
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept={ACCEPTED_IMAGE_TYPES.join(',')}
+                aria-label="Choose an image to insert"
+                style={{ display: 'none' }}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = '';
+                  if (file) void insertImageFileRef.current(file);
+                }}
+              />
+              {imageError && (
+                <span role="alert" style={{ fontSize: '0.74rem', color: '#B91C1C' }}>{imageError}</span>
+              )}
+            </>
+          )}
           <ActionMenu
             label="Insert"
             items={[
@@ -1090,6 +1187,10 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
             onChangePageType={(value) => { setPageType(value); setIsDirty(true); }}
             onChangeAliases={(value) => { setAliases(value); setIsDirty(true); }}
             onChangeTags={(value) => { setTags(value); setIsDirty(true); }}
+            customFields={customFields}
+            currentContent={content}
+            canPublish={currentRole === 'owner'}
+            onChangeCustomFields={(value) => { setCustomFields(value); setIsDirty(true); }}
             onNavigateToPage={onNavigateToPage}
             onAddTimelineEntry={onAddTimelineEntry}
             onClose={() => setIsInspectorOpen(false)}

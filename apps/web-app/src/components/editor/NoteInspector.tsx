@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { ArrowUpRight, Clock, Network, SlidersHorizontal, X } from 'lucide-react';
+import { ArrowUpRight, Clock, History, Network, SlidersHorizontal, X } from 'lucide-react';
 import { Page, PageType, TimelineEntry } from '@tkxel-vault/types';
 import { IconButton } from '../ui/index.js';
 import { LocalGraphView } from '../graph/LocalGraphView.js';
 import { TimelineView } from './TimelineView.js';
+import { VersionHistoryPanel, CrossVaultLinks } from './VersionHistoryPanel.js';
+import { customFieldsToYaml, parseCustomFieldsYaml } from '../../utils/front-matter-fields.js';
 
-type InspectorTab = 'properties' | 'links' | 'graph' | 'timeline';
+type InspectorTab = 'properties' | 'links' | 'graph' | 'timeline' | 'history';
 
 export interface NoteInspectorProps {
   page: Page;
@@ -24,6 +26,13 @@ export interface NoteInspectorProps {
   onChangePageType: (type: PageType) => void;
   onChangeAliases: (aliases: string[]) => void;
   onChangeTags: (tags: string[]) => void;
+  /** User-defined front matter fields (FR-05). */
+  customFields?: Record<string, unknown>;
+  /** Content currently in the editor, for comparison against earlier versions. */
+  currentContent?: string;
+  /** Owners can restore versions and unpublish (FR-41, FR-44). */
+  canPublish?: boolean;
+  onChangeCustomFields?: (fields: Record<string, unknown>) => void;
   onNavigateToPage: (title: string) => void;
   onAddTimelineEntry: (text: string) => void;
   onClose: () => void;
@@ -35,12 +44,14 @@ const tabs: Array<{ id: InspectorTab; label: string; icon: React.ReactNode }> = 
   { id: 'links', label: 'Links', icon: <ArrowUpRight size={15} /> },
   { id: 'graph', label: 'Local graph', icon: <Network size={15} /> },
   { id: 'timeline', label: 'Timeline', icon: <Clock size={15} /> },
+  { id: 'history', label: 'History', icon: <History size={15} /> },
 ];
 
 export const NoteInspector: React.FC<NoteInspectorProps> = ({
   page, pages, links, backlinks, timelineEntries, canEdit, pageType, categories, aliases, tags,
   folder, folders = [], onChangeFolder,
   onChangePageType, onChangeAliases, onChangeTags, onNavigateToPage, onAddTimelineEntry, onClose,
+  customFields = {}, onChangeCustomFields, currentContent = '', canPublish = false,
   initialTab = 'properties',
 }) => {
   const [activeTab, setActiveTab] = useState<InspectorTab>(initialTab);
@@ -55,6 +66,13 @@ export const NoteInspector: React.FC<NoteInspectorProps> = ({
 
   React.useEffect(() => {
     setTagsInput(tags.join(', '));
+  }, [page.id]);
+
+  const [customYaml, setCustomYaml] = useState(() => customFieldsToYaml(customFields));
+  const [customYamlError, setCustomYamlError] = useState<string | null>(null);
+  React.useEffect(() => {
+    setCustomYaml(customFieldsToYaml(customFields));
+    setCustomYamlError(null);
   }, [page.id]);
 
   const outgoing = links
@@ -186,6 +204,33 @@ export const NoteInspector: React.FC<NoteInspectorProps> = ({
                 }}
               />
             </label>
+            {onChangeCustomFields && (
+              <label>Front matter fields
+                <textarea
+                  value={customYaml}
+                  disabled={!canEdit}
+                  rows={5}
+                  spellCheck={false}
+                  placeholder={'status: active\nowner: "[[Sara Khan]]"'}
+                  aria-invalid={customYamlError ? true : undefined}
+                  aria-describedby="custom-front-matter-help"
+                  style={{ fontFamily: 'var(--font-mono, monospace)', resize: 'vertical' }}
+                  onChange={(event) => {
+                    setCustomYaml(event.target.value);
+                    const parsed = parseCustomFieldsYaml(event.target.value);
+                    if (parsed.ok) {
+                      setCustomYamlError(null);
+                      onChangeCustomFields(parsed.fields);
+                    } else {
+                      setCustomYamlError(parsed.error);
+                    }
+                  }}
+                />
+                <small id="custom-front-matter-help" role={customYamlError ? 'alert' : undefined}>
+                  {customYamlError || 'Any extra YAML fields, one "key: value" per line. Saved with the note and included in exports.'}
+                </small>
+              </label>
+            )}
           </div>
         )}
 
@@ -203,6 +248,7 @@ export const NoteInspector: React.FC<NoteInspectorProps> = ({
                 ? outgoing.map((target) => <button type="button" key={target.id} onClick={() => onNavigateToPage(target.title)}><ArrowUpRight size={14} />{target.title}</button>)
                 : <p>Add a [[wiki-link]] to connect another note.</p>}
             </section>
+            <CrossVaultLinks pageId={page.id} />
           </div>
         )}
 
@@ -220,6 +266,12 @@ export const NoteInspector: React.FC<NoteInspectorProps> = ({
 
         {activeTab === 'timeline' && (
           <TimelineView entries={timelineEntries} onAddEntry={onAddTimelineEntry} canEdit={canEdit} />
+        )}
+
+        {activeTab === 'history' && (
+          canEdit
+            ? <VersionHistoryPanel pageId={page.id} currentContent={currentContent} canPublish={canPublish} />
+            : <p>Version history is available to Owners and Editors.</p>
         )}
       </div>
     </aside>

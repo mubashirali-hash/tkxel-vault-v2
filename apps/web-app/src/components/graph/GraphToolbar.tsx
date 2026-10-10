@@ -7,6 +7,9 @@ export interface GraphToolbarProps {
   onSearchChange: (query: string) => void;
   selectedType: string;
   onTypeSelect: (type: string) => void;
+  selectedTag?: string;
+  onTagSelect?: (tag: string) => void;
+  availableTags?: string[];
   onZoomIn: () => void;
   onZoomOut: () => void;
   onReset: () => void;
@@ -31,7 +34,7 @@ export interface GraphToolbarProps {
 }
 
 export const GraphToolbar: React.FC<GraphToolbarProps> = ({
-  searchQuery, onSearchChange, selectedType, onTypeSelect, onZoomIn, onZoomOut, onReset,
+  searchQuery, onSearchChange, selectedType, onTypeSelect, selectedTag = 'all', onTagSelect, availableTags = [], onZoomIn, onZoomOut, onReset,
   onFitSelection, availableCategories = [], isConnecting = false, onToggleConnect,
   scope = 'all', onScopeChange, localScopeAvailable = false, resultCount = 0, totalCount = 0,
   compact = false, viewMode = '2d', onViewModeChange, hideOrphans = false, onToggleHideOrphans,
@@ -74,6 +77,15 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = ({
             {availableCategories.map((type) => <option key={type} value={type}>{type}</option>)}
           </select>
         </label>
+        {onTagSelect && availableTags.length > 0 && (
+          <label className="graph-filter">
+            <span>Tag</span>
+            <select value={selectedTag} onChange={(event) => onTagSelect(event.target.value)}>
+              <option value="all">All tags</option>
+              {availableTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+            </select>
+          </label>
+        )}
         <span className="graph-toolbar__count" aria-live="polite">{resultCount} of {totalCount} notes</span>
       </div>
 

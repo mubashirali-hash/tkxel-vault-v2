@@ -1,3 +1,4 @@
+import { API_URL } from '../../utils/api-base.js';
 import React, { useEffect, useMemo, useState } from 'react';
 import { GitCompareArrows, RotateCcw } from 'lucide-react';
 import { VaultRole } from '@tkxel-vault/types';
@@ -51,7 +52,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ pageId, vaultId, current
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
-        const apiUrl = import.meta.env?.VITE_API_URL || 'http://localhost:3002/api';
+        const apiUrl = API_URL;
         const response = await fetch(`${apiUrl}/pages/${pageId}/versions?vaultId=${vaultId}`, {
           headers,
         });

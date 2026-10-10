@@ -2,10 +2,26 @@ import React, { useState, useEffect } from 'react';
 import { FileText, Plus, X, CornerDownLeft } from 'lucide-react';
 import { Page } from '@tkxel-vault/types';
 
+/** Relation types offered for typed links, written as [[relation::Page]] (FR-15). */
+export const LINK_RELATIONS = ['works_at', 'client_of', 'owns', 'depends_on', 'decided_in', 'attended', 'related_to'];
+
+/** Splits what was typed after "[[" into an optional relation and the page search text. */
+export function splitLinkQuery(query: string): { relation: string; search: string } {
+  const separator = query.indexOf('::');
+  if (separator === -1) return { relation: '', search: query };
+  return { relation: query.slice(0, separator).trim(), search: query.slice(separator + 2) };
+}
+
+/** The text placed inside [[ ]] for a link to `title`, with its relation when one is set. */
+export function formatLinkTarget(title: string, relation?: string): string {
+  const clean = (relation || '').trim();
+  return clean && clean !== 'references' ? `${clean}::${title}` : title;
+}
+
 export interface WikiLinkPickerProps {
   availablePages: Page[];
   query: string;
-  onSelectLink: (title: string) => void;
+  onSelectLink: (title: string, relation?: string) => void;
   onClose: () => void;
 }
 
@@ -16,11 +32,17 @@ export const WikiLinkPicker: React.FC<WikiLinkPickerProps> = ({
   onClose,
 }) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const typed = splitLinkQuery(query);
+  // A relation chosen from the list applies until the user types a different one
+  const [chosenRelation, setChosenRelation] = useState('');
+  const relation = typed.relation || chosenRelation;
+  const search = typed.search.trim();
+  const select = (title: string) => onSelectLink(title, relation || undefined);
 
   const filtered = availablePages.filter(
     (p) =>
-      p.title.toLowerCase().includes(query.toLowerCase()) ||
-      p.aliases?.some((a) => a.toLowerCase().includes(query.toLowerCase()))
+      p.title.toLowerCase().includes(search.toLowerCase()) ||
+      p.aliases?.some((a) => a.toLowerCase().includes(search.toLowerCase()))
   );
 
   useEffect(() => {
@@ -41,9 +63,9 @@ export const WikiLinkPicker: React.FC<WikiLinkPickerProps> = ({
         e.preventDefault();
         e.stopPropagation();
         if (filtered.length > 0 && filtered[selectedIndex]) {
-          onSelectLink(filtered[selectedIndex].title);
+          select(filtered[selectedIndex].title);
         } else {
-          onSelectLink(query.trim() || 'New Page');
+          select(search || 'New Page');
         }
       } else if (e.key === 'Escape') {
         e.preventDefault();
@@ -54,7 +76,7 @@ export const WikiLinkPicker: React.FC<WikiLinkPickerProps> = ({
 
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [filtered, selectedIndex, query, onSelectLink, onClose]);
+  }, [filtered, selectedIndex, query, relation, onSelectLink, onClose]);
 
   return (
     <div
@@ -90,7 +112,7 @@ export const WikiLinkPicker: React.FC<WikiLinkPickerProps> = ({
             letterSpacing: '0.04em',
           }}
         >
-          LINK TO NOTE [[{query}...]] (↑/↓ + Enter)
+          LINK TO NOTE [[{formatLinkTarget(search, relation)}...]] (↑/↓ + Enter)
         </span>
         <button
           type="button"
@@ -102,6 +124,21 @@ export const WikiLinkPicker: React.FC<WikiLinkPickerProps> = ({
         </button>
       </div>
 
+      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '2px 8px 6px', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+        Relation
+        <select
+          aria-label="Link relation"
+          value={LINK_RELATIONS.includes(relation) || relation === '' ? relation : '__typed'}
+          disabled={Boolean(typed.relation)}
+          onChange={(event) => setChosenRelation(event.target.value)}
+          style={{ flex: 1, minWidth: 0, fontSize: '0.74rem' }}
+        >
+          <option value="">Plain link</option>
+          {LINK_RELATIONS.map((value) => <option key={value} value={value}>{value}</option>)}
+          {typed.relation && !LINK_RELATIONS.includes(typed.relation) && <option value="__typed">{typed.relation}</option>}
+        </select>
+      </label>
+
       {filtered.length > 0 ? (
         filtered.map((page, idx) => {
           const isHighlighted = idx === selectedIndex;
@@ -111,7 +148,7 @@ export const WikiLinkPicker: React.FC<WikiLinkPickerProps> = ({
               role="option"
               aria-selected={isHighlighted}
               key={page.id}
-              onClick={() => onSelectLink(page.title)}
+              onClick={() => select(page.title)}
               onMouseEnter={() => setSelectedIndex(idx)}
               style={{
                 display: 'flex',
@@ -146,7 +183,7 @@ export const WikiLinkPicker: React.FC<WikiLinkPickerProps> = ({
           type="button"
           role="option"
           aria-selected="true"
-          onClick={() => onSelectLink(query || 'New Page')}
+          onClick={() => select(search || 'New Page')}
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -161,7 +198,7 @@ export const WikiLinkPicker: React.FC<WikiLinkPickerProps> = ({
           }}
         >
           <Plus size={14} />
-          <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>Create "[[{query || 'New Page'}]]" (Enter)</span>
+          <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>Create "[[{formatLinkTarget(search || 'New Page', relation)}]]" (Enter)</span>
         </button>
       )}
     </div>

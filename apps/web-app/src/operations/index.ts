@@ -4,3 +4,4 @@ export * from './wiki-link-actions.js';
 export * from './page-save-actions.js';
 export * from './import-pipeline.js';
 export * from './export-packaging.js';
+export * from './skill-actions.js';

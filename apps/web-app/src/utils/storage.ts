@@ -63,7 +63,9 @@ export interface VaultData {
   currentRole?: VaultRole;
 }
 
-const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3002/api';
+
+// Kept local (not imported from ./api-base) so this module stays loadable without a TS path loader
+const API_URL = ((import.meta as any).env?.VITE_API_URL || 'http://localhost:3002/api').replace(/\/+$/, '');
 
 let lastDbFailureTime = 0;
 const DB_FAILURE_COOLDOWN_MS = 5000;
@@ -151,12 +153,15 @@ export async function loadVaultData(vaultId: string, userId: string = 'usr_admin
     }
   }
 
+  // The server never returns the contents of a locked vault, so those requests are not made at all
+  const readable = vaultMode !== 'locked';
+
   try {
     const [pagesRes, linksRes, skillsRes, timelineRes, sharesRes, auditsRes] = await Promise.all([
-      fetch(`${API_URL}/vaults/${vaultId}/pages`, { headers }).catch(() => null),
-      fetch(`${API_URL}/vaults/${vaultId}/links`, { headers }).catch(() => null),
+      readable ? fetch(`${API_URL}/vaults/${vaultId}/pages`, { headers }).catch(() => null) : null,
+      readable ? fetch(`${API_URL}/vaults/${vaultId}/links`, { headers }).catch(() => null) : null,
       fetch(`${API_URL}/vaults/${vaultId}/skills`, { headers }).catch(() => null),
-      fetch(`${API_URL}/vaults/${vaultId}/timeline`, { headers }).catch(() => null),
+      readable ? fetch(`${API_URL}/vaults/${vaultId}/timeline`, { headers }).catch(() => null) : null,
       fetch(`${API_URL}/vaults/${vaultId}/shares`, { headers }).catch(() => null),
       fetch(`${API_URL}/vaults/${vaultId}/audits`, { headers }).catch(() => null),
     ]);

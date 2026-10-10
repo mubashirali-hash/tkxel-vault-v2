@@ -1,3 +1,4 @@
+import { API_URL } from '../../utils/api-base.js';
 import React, { useState, useEffect } from 'react';
 import {
   X,
@@ -42,7 +43,7 @@ export const McpConnectModal: React.FC<McpConnectModalProps> = ({
     let isMounted = true;
     setGatewayStatus('checking');
 
-    fetch('http://localhost:3002/api/health', { method: 'GET' })
+    fetch(`${API_URL}/health`, { method: 'GET' })
       .then((res) => {
         if (res.ok && isMounted) setGatewayStatus('online');
         else if (isMounted) setGatewayStatus('offline');

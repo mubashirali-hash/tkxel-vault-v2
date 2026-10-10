@@ -14,11 +14,13 @@
   "dependencies": {
     "@react-oauth/google": "^0.13.5",
     "@tiptap/extension-code-block": "3.31.3",
+    "@tiptap/extension-image": "3.31.3",
     "@tiptap/extension-placeholder": "^3.31.3",
     "@tiptap/extension-table": "3.31.3",
     "@tiptap/extension-table-cell": "3.31.3",
     "@tiptap/extension-table-header": "3.31.3",
     "@tiptap/extension-table-row": "3.31.3",
+    "@tiptap/pm": "3.31.3",
     "@tiptap/react": "^3.31.3",
     "@tiptap/starter-kit": "^3.31.3",
     "@tkxel-vault/types": "workspace:*",

@@ -23,10 +23,13 @@ export interface AppShellProps {
   onCloseNavigation: () => void;
   onSelectVault: (vault: Vault) => void;
   onDeleteVault?: (vaultId: string) => Promise<void> | void;
+  onChangeVaultMode?: (vault: Vault) => Promise<void> | void;
   onSelectTab: (tab: AppTab) => void;
   onOpenShareModal: () => void;
   onOpenExportModal: () => void;
   onOpenImportModal: () => void;
+  /** Rebuilds the vault's search index on the server (Owners only, FR-24). */
+  onReindexVault?: () => void;
   onOpenMcpModal?: () => void;
   onOpenCreateVault?: () => void;
   onLogout?: () => void;
@@ -36,8 +39,8 @@ export interface AppShellProps {
 export const AppShell: React.FC<AppShellProps> = ({
   currentVault, vaults, currentRole, currentTab, userInfo,
   navigationOpen, navigationCollapsed, navigationAvailable, onToggleNavigation, onCloseNavigation,
-  onSelectVault, onDeleteVault, onSelectTab, onOpenShareModal, onOpenExportModal,
-  onOpenImportModal, onOpenMcpModal, onOpenCreateVault, onLogout, children,
+  onSelectVault, onDeleteVault, onChangeVaultMode, onSelectTab, onOpenShareModal, onOpenExportModal,
+  onOpenImportModal, onReindexVault, onOpenMcpModal, onOpenCreateVault, onLogout, children,
 }) => {
   const [vaultDropdownOpen, setVaultDropdownOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -97,6 +100,9 @@ export const AppShell: React.FC<AppShellProps> = ({
       : []),
     ...(isOpenVault && currentRole === 'owner'
       ? [{ id: 'export', label: 'Export vault', icon: <Download size={16} />, onSelect: onOpenExportModal }]
+      : []),
+    ...(isOpenVault && currentRole === 'owner' && onReindexVault
+      ? [{ id: 'reindex', label: 'Rebuild search index', icon: <Search size={16} />, onSelect: onReindexVault }]
       : []),
     {
       id: 'ai-toggle',
@@ -208,6 +214,21 @@ export const AppShell: React.FC<AppShellProps> = ({
                             </span>
                             {selected && <Check size={16} className="app-popover__check" />}
                           </button>
+                          {onChangeVaultMode && (
+                            <button
+                              type="button"
+                              className="app-vault-menu__delete-btn"
+                              title={vault.mode === 'open' ? `Lock vault "${vault.name}"` : `Open vault "${vault.name}"`}
+                              aria-label={vault.mode === 'open' ? `Lock vault ${vault.name}` : `Open vault ${vault.name}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setVaultDropdownOpen(false);
+                                void onChangeVaultMode(vault);
+                              }}
+                            >
+                              {vault.mode === 'open' ? <Lock size={13} /> : <BookOpen size={13} />}
+                            </button>
+                          )}
                           {onDeleteVault && (
                             <button
                               type="button"

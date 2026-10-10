@@ -479,3 +479,27 @@
   font-weight: 500;
 }
 
+/* Vault-hosted images (FR-02) */
+.vault-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 12px 0;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+}
+
+.vault-image--unavailable {
+  min-height: 48px;
+  padding: 12px;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  background: var(--surface-subtle, #f8fafc);
+}
+
+.ProseMirror-selectednode.vault-image {
+  outline: 2px solid var(--tk-primary);
+}
+
+/* A [[wiki-link]] whose page does not exist yet (FR-11) */
+.wiki-link--unresolved { color: #B45309; text-decoration: underline dashed #D97706; text-underline-offset: 3px; }
