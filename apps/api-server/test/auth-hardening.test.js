@@ -67,3 +67,17 @@ test('Auth Hardening: CORS origin validator enforces whitelist strictly', () => 
   // 3. Malicious origin fails in development unless explicit dev cors flag is set
   assert.equal(validateOrigin('https://attacker-site.com', { NODE_ENV: 'development' }), false);
 });
+
+test('Regression 15.2: production dev-bypass policy is opt-in and SSO audience fails closed', async () => {
+  const { isDevAuthBypassEnabled, getSsoAudience } = await import('../dist/auth/dev-bypass.js');
+
+  assert.equal(isDevAuthBypassEnabled({ NODE_ENV: 'development' }), false, 'unset flag must not enable the bypass');
+  assert.equal(isDevAuthBypassEnabled({ NODE_ENV: 'development', ENABLE_DEV_AUTH_BYPASS: 'false' }), false);
+  assert.equal(isDevAuthBypassEnabled({ ENABLE_DEV_AUTH_BYPASS: 'true' }), true);
+  assert.equal(isDevAuthBypassEnabled({ NODE_ENV: 'production', ENABLE_DEV_AUTH_BYPASS: 'true' }), false);
+
+  assert.equal(getSsoAudience({}), null);
+  assert.equal(getSsoAudience({ GOOGLE_CLIENT_ID: '  ' }), null);
+  assert.equal(getSsoAudience({ GOOGLE_CLIENT_ID: 'replace_with_your_client_id_here' }), null);
+  assert.equal(getSsoAudience({ GOOGLE_CLIENT_ID: 'abc.apps.googleusercontent.com' }), 'abc.apps.googleusercontent.com');
+});
