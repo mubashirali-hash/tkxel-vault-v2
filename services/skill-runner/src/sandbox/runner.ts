@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { OutputSanitizer } from './sanitizer.js';
@@ -19,6 +20,8 @@ export interface ContainerSecurityPolicy {
 export interface SandboxOptions {
   timeoutMs?: number; // Hard execution limit, default 120,000ms (FR-74)
   allowedEnvVars?: string[];
+  /** Per-execution variables passed only to this child process; never read from or written to process.env. */
+  env?: Record<string, string>;
   workingDirectory?: string;
   useDocker?: boolean;
   runtime?: 'runsc' | 'firecracker' | string;
@@ -93,7 +96,8 @@ export class SandboxRunner {
     command: string,
     args: string[],
     policy: ContainerSecurityPolicy,
-    sanitizedEnv: Record<string, string>
+    sanitizedEnv: Record<string, string>,
+    containerName?: string
   ): string[] {
     const dockerArgs = [
       'run',
@@ -107,11 +111,19 @@ export class SandboxRunner {
       `--network=${policy.network}`,
       `--cpus=${policy.cpus}`,
       `--memory=${policy.memory}`,
+      // No swap on top of the limit. Without this the limit was not enforced under gVisor (measured:
+      // a 900 MB allocation succeeded inside a 512 MB sandbox).
+      `--memory-swap=${policy.memory}`,
       `--pids-limit=${policy.pidsLimit}`,
     ];
 
     if (policy.runtime) {
       dockerArgs.push(`--runtime=${policy.runtime}`);
+    }
+
+    // A known name lets the runner stop the container itself when the hard timeout fires
+    if (containerName) {
+      dockerArgs.push(`--name=${containerName}`);
     }
 
     for (const [key, value] of Object.entries(sanitizedEnv)) {
@@ -195,6 +207,10 @@ export class SandboxRunner {
       }
     }
 
+    if (options?.env) {
+      Object.assign(sanitizedEnv, options.env);
+    }
+
     // Production enforcement: Container sandbox is mandatory; host process fallback is strictly forbidden
     if (isProduction && !useDocker) {
       throw new SandboxPolicyError(
@@ -224,9 +240,10 @@ export class SandboxRunner {
     return new Promise((resolve, reject) => {
       let timedOut = false;
       let child: ReturnType<typeof spawn>;
+      const containerName = useDocker ? `tkxel-sandbox-${crypto.randomUUID()}` : undefined;
 
       if (useDocker) {
-        const dockerArgs = SandboxRunner.buildDockerArgs(command, args, policy, sanitizedEnv);
+        const dockerArgs = SandboxRunner.buildDockerArgs(command, args, policy, sanitizedEnv, containerName);
 
         child = spawn('docker', dockerArgs, {
           cwd: options?.workingDirectory,
@@ -267,7 +284,17 @@ export class SandboxRunner {
       // Hard timeout enforcement (FR-74)
       const timer = setTimeout(() => {
         timedOut = true;
-        child.kill('SIGKILL');
+        // Killing the docker client does not stop the container it started, so the container is
+        // killed by name first. `--rm` then removes it.
+        if (containerName) {
+          const killer = spawn('docker', ['kill', containerName], { stdio: 'ignore' });
+          killer.on('error', () => {});
+          killer.on('close', () => child.kill('SIGKILL'));
+          // Never wait indefinitely on the daemon
+          setTimeout(() => child.kill('SIGKILL'), 5000).unref();
+        } else {
+          child.kill('SIGKILL');
+        }
       }, timeoutMs);
 
       child.on('error', (err) => {

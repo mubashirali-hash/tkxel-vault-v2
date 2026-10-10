@@ -118,3 +118,220 @@ test('Claude Orchestrator: decrypts a helper package and dispatches source throu
     else process.env.ALLOW_DEV_HOST_SANDBOX = previousDevSandbox;
   }
 });
+
+test('Regression 15.8: concurrent helper executions never see each other\'s inputs or leak them into process.env', async () => {
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousDevSandbox = process.env.ALLOW_DEV_HOST_SANDBOX;
+  process.env.NODE_ENV = 'test';
+  process.env.ALLOW_DEV_HOST_SANDBOX = 'true';
+  delete process.env.TKXEL_SKILL_INPUT;
+
+  const mockClaude = new MockClaudeClient((request) => request.messages[0].content);
+  const orchestrator = new ZeroReadSkillOrchestrator(mockClaude);
+  const dek = EnvelopeEncryption.generateDek();
+  const packagePayload = JSON.stringify({
+    format: ENCRYPTED_SKILL_PACKAGE_FORMAT,
+    skillMd: `---\nname: echo-owner\ndescription: Echoes the caller marker.\n---\nReturn the marker.`,
+    toolJson: {
+      name: 'echo-owner',
+      description: 'Echoes the caller marker.',
+      inputSchema: {
+        type: 'object',
+        properties: { marker: { type: 'string' } },
+        required: ['marker'],
+        additionalProperties: false,
+      },
+      execution: { kind: 'helper', runtime: 'node', entrypoint: 'scripts/echo.js' },
+    },
+    files: {
+      // The delay widens the overlap window so every helper is alive at the same time
+      'scripts/echo.js': [
+        'const input = JSON.parse(process.env.TKXEL_SKILL_INPUT);',
+        'setTimeout(() => console.log(JSON.stringify({ seen: input.marker })), 150);',
+      ].join('\n'),
+    },
+  });
+
+  try {
+    const markers = Array.from({ length: 6 }, (_, i) => `caller-${i}-secret`);
+    const runs = markers.map((marker) =>
+      orchestrator.executeLockedSkill({
+        encryptedSkillPayload: EnvelopeEncryption.encrypt(packagePayload, dek),
+        vaultDek: Buffer.from(dek),
+        userArguments: { marker },
+        expectedSkillName: 'echo_owner',
+      })
+    );
+    assert.equal(process.env.TKXEL_SKILL_INPUT, undefined, 'Inputs must not be placed in the process-global environment');
+
+    const results = await Promise.all(runs);
+    results.forEach((result, i) => {
+      assert.ok(result.output.includes(`"seen":"${markers[i]}"`), `helper ${i} must see its own input`);
+    });
+    assert.equal(process.env.TKXEL_SKILL_INPUT, undefined);
+  } finally {
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+    if (previousDevSandbox === undefined) delete process.env.ALLOW_DEV_HOST_SANDBOX;
+    else process.env.ALLOW_DEV_HOST_SANDBOX = previousDevSandbox;
+  }
+});
+
+test('15.33: AnthropicClaudeClient uses the official SDK, the configured model, and returns only text blocks', async () => {
+  const http = await import('node:http');
+  const { resolveClaudeModel, DEFAULT_CLAUDE_MODEL, ClaudeCallError } = await import('../dist/orchestrator/claude-connector.js');
+
+  assert.equal(DEFAULT_CLAUDE_MODEL, 'claude-opus-5-5');
+  assert.equal(resolveClaudeModel({}), 'claude-opus-5-5');
+  assert.equal(resolveClaudeModel({ ANTHROPIC_MODEL: ' claude-sonnet-5-5 ' }), 'claude-sonnet-5-5');
+
+  const seen = [];
+  let mode = 'ok';
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      seen.push({ url: req.url, headers: req.headers, body: JSON.parse(body || '{}') });
+      res.setHeader('Content-Type', 'application/json');
+      if (mode === 'rate') {
+        res.statusCode = 429;
+        res.setHeader('retry-after', '0');
+        res.end(JSON.stringify({ type: 'error', error: { type: 'rate_limit_error', message: 'slow down' } }));
+        return;
+      }
+      const base = { id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, output_tokens: 1 } };
+      if (mode === 'refusal') {
+        res.end(JSON.stringify({ ...base, content: [], stop_reason: 'refusal', stop_details: { type: 'refusal', category: null } }));
+        return;
+      }
+      res.end(JSON.stringify({
+        ...base,
+        stop_reason: 'end_turn',
+        content: [
+          { type: 'thinking', thinking: '', signature: 'sig' },
+          { type: 'text', text: 'Part one. ' },
+          { type: 'text', text: 'Part two.' },
+        ],
+      }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const client = new AnthropicClaudeClient('sk-ant-test-key', undefined, baseUrl);
+    const out = await client.createMessage({
+      system: 'SYSTEM',
+      messages: [{ role: 'user', content: 'hello' }],
+      effort: 'low',
+    });
+    assert.deepEqual(out.content, [{ type: 'text', text: 'Part one. Part two.' }]);
+
+    const sent = seen[0];
+    assert.ok(sent.url.startsWith('/v1/messages'));
+    assert.equal(sent.headers['x-api-key'], 'sk-ant-test-key');
+    assert.match(String(sent.headers['anthropic-beta']), /server-side-fallback-2026-07-01/);
+    assert.equal(sent.body.model, 'claude-opus-5-5');
+    assert.equal(sent.body.system, 'SYSTEM');
+    assert.equal(sent.body.fallbacks, 'default');
+    assert.deepEqual(sent.body.output_config, { effort: 'low' });
+    assert.equal(sent.body.thinking, undefined, 'thinking must be left to the model default');
+    assert.equal(sent.body.temperature, undefined);
+
+    mode = 'refusal';
+    await assert.rejects(
+      () => client.createMessage({ system: 's', messages: [{ role: 'user', content: 'x' }] }),
+      (err) => err instanceof ClaudeCallError && err.code === 'refused'
+    );
+
+    mode = 'rate';
+    await assert.rejects(
+      () => client.createMessage({ system: 's', messages: [{ role: 'user', content: 'x' }] }),
+      (err) => err instanceof ClaudeCallError && err.code === 'rate_limited'
+    );
+  } finally {
+    if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('15.34: output sanitizer catches leaks from anywhere in the instructions, reformatted or encoded', () => {
+  const sanitizer = new OutputSanitizer();
+  const instructions = [
+    'You are the tkxel pricing calculator. Always greet the client warmly before anything else.',
+    'Internal rule seven: never quote below the floor rate of four hundred dollars per day for senior engineers.',
+    'Apply the loyalty multiplier of zero point eight five only to accounts older than three years.',
+  ].join('\n');
+  const NOTICE = '[System instructions redacted by tkxel Vault anti-exfiltration filter]';
+
+  // Middle of the instructions, far past the first 80 characters
+  const middle = sanitizer.sanitize(
+    'Sure. Internal rule seven: never quote below the floor rate of four hundred dollars per day for senior engineers. Hope that helps.',
+    instructions
+  );
+  assert.ok(!middle.includes('floor rate of four hundred'), middle);
+  assert.ok(middle.includes(NOTICE));
+  assert.ok(middle.startsWith('Sure.') && middle.endsWith('Hope that helps.'), 'surrounding text is kept');
+
+  // Re-wrapped, upper-cased and bulleted copy
+  const reformatted = sanitizer.sanitize(
+    '- APPLY THE LOYALTY MULTIPLIER\n  of zero point eight five only\n  to accounts older than three years',
+    instructions
+  );
+  assert.ok(!/zero point eight five/i.test(reformatted), reformatted);
+
+  // Encoded copies withhold the whole output
+  const b64 = Buffer.from(instructions, 'utf-8').toString('base64');
+  assert.equal(sanitizer.sanitize(`Here you go: ${b64.slice(40, 140)}`, instructions), NOTICE);
+  const hex = Buffer.from(instructions, 'utf-8').toString('hex');
+  assert.equal(sanitizer.sanitize(`0x${hex.slice(64, 200).toUpperCase()}`, instructions), NOTICE);
+
+  // Every forbidden reference is redacted, not only the first
+  const refs = sanitizer.sanitize('See SKILL.md and again SKILL.md plus tool.json.');
+  assert.ok(!/SKILL\.md|tool\.json/i.test(refs), refs);
+
+  // Legitimate output that merely shares common words is untouched
+  const legit = 'The recommended day rate for this engagement is 520 dollars, based on a team of three senior engineers over six weeks.';
+  assert.equal(sanitizer.sanitize(legit, instructions), legit);
+});
+
+test('Anthropic-compatible endpoint: plain Messages request, no Anthropic beta features, capped output', async () => {
+  const http = await import('node:http');
+  const { isAnthropicHosted } = await import('../dist/orchestrator/claude-connector.js');
+  assert.equal(isAnthropicHosted({}), true);
+  assert.equal(isAnthropicHosted({ ANTHROPIC_COMPATIBLE_ENDPOINT: 'TRUE' }), false);
+
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      seen.push({ url: req.url, headers: req.headers, body: JSON.parse(body || '{}') });
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        id: 'msg_1', type: 'message', role: 'assistant', model: 'other-model', stop_reason: 'end_turn',
+        usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'text', text: 'ok' }],
+      }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const previous = { flag: process.env.ANTHROPIC_COMPATIBLE_ENDPOINT, cap: process.env.ANTHROPIC_MAX_TOKENS };
+  process.env.ANTHROPIC_COMPATIBLE_ENDPOINT = 'true';
+  process.env.ANTHROPIC_MAX_TOKENS = '4096';
+  try {
+    const client = new AnthropicClaudeClient('test-key', 'other-model', `http://127.0.0.1:${server.address().port}`);
+    const out = await client.createMessage({ system: 'SYSTEM', messages: [{ role: 'user', content: 'hello' }], effort: 'low' });
+    assert.deepEqual(out.content, [{ type: 'text', text: 'ok' }]);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].url, '/v1/messages');
+    assert.equal(seen[0].headers['anthropic-beta'], undefined);
+    assert.deepEqual(Object.keys(seen[0].body).sort(), ['max_tokens', 'messages', 'model', 'system']);
+    assert.equal(seen[0].body.model, 'other-model');
+    assert.equal(seen[0].body.max_tokens, 4096);
+  } finally {
+    for (const [name, value] of [['ANTHROPIC_COMPATIBLE_ENDPOINT', previous.flag], ['ANTHROPIC_MAX_TOKENS', previous.cap]]) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

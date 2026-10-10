@@ -100,6 +100,10 @@ export function getRedisClient(): Redis | null {
       redisClientInstance.on('error', () => {
         // Handled silently
       });
+      // The connection must not keep the process alive on its own: a running service is kept alive by
+      // its HTTP listener, while short-lived processes (tests, scripts) have to be able to exit.
+      const client = redisClientInstance as any;
+      client.on('connect', () => client.stream?.unref?.());
     } catch {
       // Ignored
     }
@@ -124,6 +128,14 @@ export async function recordAndVerifyNonce(
   const now = Date.now();
   const ttlMs = Math.max(exp - now, 1000);
   const client = customRedis !== undefined ? customRedis : getRedisClient();
+
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  // Outside production a Redis error falls back to the in-memory cache below. A nonce recorded there
+  // (for example while Redis was still connecting) must stay used once Redis is reachable.
+  if (!isProduction && seenNonces.has(nonce) && now <= (seenNonces.get(nonce) ?? 0)) {
+    throw new Error(`Service token replay detected: nonce '${nonce}' has already been used.`);
+  }
 
   if (client) {
     try {
