@@ -23,6 +23,17 @@ export interface GraphLink extends d3.SimulationLinkDatum<GraphNode> {
   target: string | GraphNode;
 }
 
+/** Above this many nodes the layout uses the large-graph settings below (NFR-11). */
+export const LARGE_GRAPH_NODES = 600;
+export const LARGE_GRAPH_ALPHA_DECAY = 0.05;
+/** Layout work done between two frames of a large graph. */
+const LARGE_GRAPH_SLICE_MS = 40;
+
+/** Repulsion for a large graph: coarser approximation and a cut-off distance, which also keeps it compact. */
+export function largeGraphCharge<T extends { theta(value: number): T; distanceMax(value: number): T }>(charge: T, large: boolean): T {
+  return large ? charge.theta(1.2).distanceMax(600) : charge;
+}
+
 export interface KnowledgeGraphProps {
   pages: Page[];
   links: Array<{ from_page_id: string; to_page_id: string }>;
@@ -391,6 +402,9 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
       return null;
     };
 
+    // A large vault is laid out with cheaper settings and without animating every step (NFR-11)
+    const isLargeGraph = nodes.length > LARGE_GRAPH_NODES;
+
     // D3 Simulation with Optimized Repulsion & Spacing (Compact & Non-cluttered)
     const simulation = d3
       .forceSimulation<GraphNode>(nodes)
@@ -401,16 +415,16 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
           .id((d) => d.id)
           .distance(80)
       )
-      .force('charge', d3.forceManyBody().strength((d) => {
+      .force('charge', largeGraphCharge(d3.forceManyBody().strength((d) => {
         const deg = Math.min(8, degreeById.get((d as GraphNode).id) || 0);
         return -150 - deg * 12;
-      }))
+      }), isLargeGraph))
       .force('center', d3.forceCenter(width / 2, height / 2))
       .force('collide', d3.forceCollide().radius((d) => {
         const deg = Math.min(8, degreeById.get((d as GraphNode).id) || 0);
         return Math.min(12, 6 + Math.sqrt(deg) * 2) + 14;
       }))
-      .alphaDecay(0.028);
+      .alphaDecay(isLargeGraph ? LARGE_GRAPH_ALPHA_DECAY : 0.028);
 
     simulationRef.current = simulation;
 
@@ -1043,6 +1057,27 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
       }
     };
 
+    // For a large graph one layout step costs about a whole frame, so animating each step would run
+    // the unfolding at half speed. The steps are computed in short slices between frames instead,
+    // drawing once per slice: the layout settles in about half the time and the page stays responsive.
+    let layoutSliceTimer: ReturnType<typeof setTimeout> | undefined;
+    if (isLargeGraph) {
+      simulation.stop();
+      const runLayoutSlice = () => {
+        const sliceStart = performance.now();
+        while (simulation.alpha() > simulation.alphaMin() && performance.now() - sliceStart < LARGE_GRAPH_SLICE_MS) {
+          simulation.tick();
+        }
+        const settled = simulation.alpha() <= simulation.alphaMin();
+        if (viewModeRef.current === '2d') {
+          if (settled) fitToGraph();
+          draw();
+        }
+        if (!settled) layoutSliceTimer = setTimeout(runLayoutSlice, 0);
+      };
+      layoutSliceTimer = setTimeout(runLayoutSlice, 0);
+    }
+
     let autoFitDone = false;
     simulation.on('tick', () => {
       if (viewModeRef.current === '2d') {
@@ -1356,6 +1391,7 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
 
     return () => {
       clearTimeout(fallbackFitTimer);
+      clearTimeout(layoutSliceTimer);
       cancelAnimationFrame(animationFrameId);
       simulation.stop();
       canvas.removeEventListener('mousedown', handleMouseDown);
