@@ -174,3 +174,103 @@ jobs:
         if: always()
         run: for c in runner api gateway web; do echo "== $c"; docker logs --tail 40 $c 2>&1 || true; done
 
+  oauth:
+    name: OAuth 2.1 End-to-End (Keycloak + MCP Gateway)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: tkxel_vault
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d tkxel_vault"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://postgres:postgrespassword@localhost:5432/tkxel_vault
+      REDIS_URL: redis://localhost:6379
+      NODE_ENV: development
+      KMS_PROVIDER: mock
+      ALLOW_DEV_MOCK_KMS: "true"
+      EMBEDDING_PROVIDER: deterministic
+      RUNNER_SHARED_SECRET: ci-oauth-check-runner-secret-0123456789abcdef
+      SSO_WEBHOOK_SECRET: ci-oauth-check-webhook-secret-0123456789
+      GATEWAY_URL: http://localhost:3001
+      KEYCLOAK_URL: http://localhost:8080
+      KEYCLOAK_ADMIN: admin
+      E2E_USER_EMAIL: e2e.reader@tkxel-test.local
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Start Keycloak
+        run: |
+          echo "KEYCLOAK_ADMIN_PASSWORD=kc-$(openssl rand -hex 12)" >> "$GITHUB_ENV"
+          echo "E2E_USER_PASSWORD=e2e-$(openssl rand -hex 12)" >> "$GITHUB_ENV"
+          source <(tail -2 "$GITHUB_ENV" | sed 's/^/export /')
+          docker run -d --name keycloak --network host -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$KEYCLOAK_ADMIN_PASSWORD" quay.io/keycloak/keycloak:26.0 start-dev --http-port=8080
+
+      - name: Install and build
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.22.0 --activate
+          pnpm install --frozen-lockfile
+          pnpm turbo run build --filter=@tkxel-vault/mcp-gateway...
+
+      - name: Migrate and seed
+        run: |
+          pnpm db:migrate
+          cd services/mcp-gateway
+          node scripts/oauth-e2e-seed.mjs | tee seed.out
+          echo "E2E_VAULT_ID=$(grep VAULT_ID= seed.out | cut -d= -f2)" >> "$GITHUB_ENV"
+
+      - name: Start the gateway with Keycloak as its authorization server
+        env:
+          OIDC_ISSUER: http://localhost:8080/realms/tkxel-vault
+          OIDC_AUDIENCE: http://localhost:3001/mcp
+          OAUTH_AUTHORIZATION_SERVERS: http://localhost:8080/realms/tkxel-vault
+          MCP_PUBLIC_URL: http://localhost:3001
+        run: |
+          cd services/mcp-gateway
+          nohup node dist/start.js > gateway.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf -o /dev/null http://localhost:3001/health && break; sleep 1; done
+          curl -s -o /dev/null -w 'gateway health: %{http_code}
+' http://localhost:3001/health
+
+      - name: Wait for Keycloak and configure the realm
+        run: |
+          for i in $(seq 1 90); do curl -sf -o /dev/null http://localhost:8080/realms/master && break; sleep 2; done
+          cd services/mcp-gateway && node scripts/oauth-e2e-check.mjs --setup
+
+      - name: Run the MCP client flow
+        run: cd services/mcp-gateway && node scripts/oauth-e2e-check.mjs
+
+      - name: Logs
+        if: always()
+        run: |
+          echo "== gateway"; tail -40 services/mcp-gateway/gateway.log || true
+          echo "== keycloak"; docker logs --tail 30 keycloak 2>&1 || true
+
