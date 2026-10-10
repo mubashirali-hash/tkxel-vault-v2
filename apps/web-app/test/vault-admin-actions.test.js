@@ -66,3 +66,34 @@ test('Vault settings dialog: destruction needs the exact vault name and is offer
   const shell = fs.readFileSync(new URL('../src/components/layout/AppShell.tsx', import.meta.url), 'utf8');
   assert.match(shell, /currentRole === 'owner' && onOpenVaultSettings/);
 });
+
+test('Locked reference pages: the routes are called as documented and content is not kept after closing', async () => {
+  const { calls, options } = stub([
+    { status: 200, body: { pages: [{ id: 'p1', title: 'Pricing', published: true, has_draft: false }] } },
+    { status: 200, body: { page: { id: 'p1', title: 'Pricing', content: 'secret', published: true } } },
+    { status: 200, body: { page_id: 'p1', draft_id: 'd1' } },
+    { status: 200, body: { version_id: 'v2' } },
+    { status: 200, body: { success: true } },
+  ]);
+  assert.equal((await actions.listLockedPagesApi('v1', options))[0].title, 'Pricing');
+  assert.equal((await actions.getLockedPageApi('v1', 'p1', options)).content, 'secret');
+  await actions.saveLockedPageApi('v1', 'p1', { title: 'Pricing', content: 'new text' }, options);
+  await actions.publishLockedPageApi('v1', 'p1', options);
+  await actions.deleteLockedPageApi('v1', 'p1', options);
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.url.replace('http://api.test', '')}`), [
+    'GET /api/vaults/v1/locked-pages',
+    'GET /api/vaults/v1/locked-pages/p1',
+    'PUT /api/vaults/v1/locked-pages/p1',
+    'POST /api/vaults/v1/locked-pages/p1/publish',
+    'DELETE /api/vaults/v1/locked-pages/p1',
+  ]);
+  assert.deepEqual(calls[2].body, { title: 'Pricing', content: 'new text' });
+
+  const modal = fs.readFileSync(new URL('../src/components/vault/LockedPagesModal.tsx', import.meta.url), 'utf8');
+  // Protected content never goes to browser storage and is dropped when the dialog closes
+  assert.doesNotMatch(modal, /localStorage|sessionStorage|indexedDB/);
+  assert.match(modal, /if \(!isOpen\) \{[\s\S]{0,160}setDraft\(null\);/);
+  assert.match(modal, /canPublish && page\.has_draft/);
+  const shell = fs.readFileSync(new URL('../src/components/layout/AppShell.tsx', import.meta.url), 'utf8');
+  assert.match(shell, /!isOpenVault && \(currentRole === 'owner' \|\| currentRole === 'editor'\) && onOpenLockedPages/);
+});

@@ -7,6 +7,7 @@ import { Suspense } from 'react';
 import { MarkdownEditor } from './components/editor/MarkdownEditor.js';
 const KnowledgeGraph = React.lazy(() => import('./components/graph/KnowledgeGraph.js').then(m => ({ default: m.KnowledgeGraph })));
 const AuditViewer = React.lazy(() => import('./components/audit/AuditViewer.js').then(m => ({ default: m.AuditViewer })));
+const LockedPagesModal = React.lazy(() => import('./components/vault/LockedPagesModal.js').then(m => ({ default: m.LockedPagesModal })));
 const VaultSettingsModal = React.lazy(() => import('./components/vault/VaultSettingsModal.js').then(m => ({ default: m.VaultSettingsModal })));
 const SharingModal = React.lazy(() => import('./components/sharing/SharingModal.js').then(m => ({ default: m.SharingModal })));
 const ExportModal = React.lazy(() => import('./components/export/ExportModal.js').then(m => ({ default: m.ExportModal })));
@@ -422,6 +423,7 @@ export const App: React.FC = () => {
   // Modal Dialog States
   const [isShareOpen, setIsShareOpen] = useState(false);
   const [isVaultSettingsOpen, setIsVaultSettingsOpen] = useState(false);
+  const [isLockedPagesOpen, setIsLockedPagesOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [isAddSkillOpen, setIsAddSkillOpen] = useState(false);
@@ -1451,6 +1453,7 @@ export const App: React.FC = () => {
       onOpenImportModal={() => setIsImportOpen(true)}
       onReindexVault={handleReindexVault}
       onOpenVaultSettings={() => setIsVaultSettingsOpen(true)}
+      onOpenLockedPages={() => setIsLockedPagesOpen(true)}
       onOpenMcpModal={() => setIsMcpOpen(true)}
       onOpenCreateVault={() => setIsCreateVaultOpen(true)}
       onLogout={() => {
@@ -1883,6 +1886,15 @@ export const App: React.FC = () => {
 
       {/* MODALS */}
       <Suspense fallback={null}>
+        {isLockedPagesOpen && currentVault.mode === 'locked' && (
+          <LockedPagesModal
+            isOpen={isLockedPagesOpen}
+            vault={currentVault}
+            canPublish={currentRole === 'owner'}
+            token={ssoToken || getAuthToken()}
+            onClose={() => setIsLockedPagesOpen(false)}
+          />
+        )}
         {isVaultSettingsOpen && (
           <VaultSettingsModal
             isOpen={isVaultSettingsOpen}

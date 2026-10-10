@@ -32,6 +32,8 @@ export interface AppShellProps {
   onReindexVault?: () => void;
   /** Rate limits, key rotation, emergency access and vault destruction. */
   onOpenVaultSettings?: () => void;
+  /** Reference pages of a locked vault, for Owners and Editors. */
+  onOpenLockedPages?: () => void;
   onOpenMcpModal?: () => void;
   onOpenCreateVault?: () => void;
   onLogout?: () => void;
@@ -42,7 +44,7 @@ export const AppShell: React.FC<AppShellProps> = ({
   currentVault, vaults, currentRole, currentTab, userInfo,
   navigationOpen, navigationCollapsed, navigationAvailable, onToggleNavigation, onCloseNavigation,
   onSelectVault, onDeleteVault, onChangeVaultMode, onSelectTab, onOpenShareModal, onOpenExportModal,
-  onOpenImportModal, onReindexVault, onOpenVaultSettings, onOpenMcpModal, onOpenCreateVault, onLogout, children,
+  onOpenImportModal, onReindexVault, onOpenVaultSettings, onOpenLockedPages, onOpenMcpModal, onOpenCreateVault, onLogout, children,
 }) => {
   const [vaultDropdownOpen, setVaultDropdownOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -105,6 +107,9 @@ export const AppShell: React.FC<AppShellProps> = ({
       : []),
     ...(isOpenVault && currentRole === 'owner' && onReindexVault
       ? [{ id: 'reindex', label: 'Rebuild search index', icon: <Search size={16} />, onSelect: onReindexVault }]
+      : []),
+    ...(!isOpenVault && (currentRole === 'owner' || currentRole === 'editor') && onOpenLockedPages
+      ? [{ id: 'locked-pages', label: 'Reference pages', icon: <FileText size={16} />, onSelect: onOpenLockedPages }]
       : []),
     ...(currentRole === 'owner' && onOpenVaultSettings
       ? [{ id: 'vault-settings', label: 'Vault settings', icon: <Lock size={16} />, onSelect: onOpenVaultSettings }]

@@ -68,3 +68,36 @@ export async function requestBreakGlassApi(vaultId: string, reason: string, opti
 export async function decideBreakGlassApi(requestId: string, decision: 'approve' | 'deny' | 'revoke', options?: ApiRequestOptions) {
   return (await call<{ request: BreakGlassRequest }>('POST', `/api/break-glass/${requestId}/${decision}`, {}, options)).request;
 }
+
+/** Reference pages of a locked vault (FR-53). Owners and Editors only; Consumers never see them. */
+export interface LockedPageSummary {
+  id: string;
+  title: string;
+  type: string;
+  tags: string[];
+  published: boolean;
+  has_draft: boolean;
+  updated_at: string;
+}
+
+export async function listLockedPagesApi(vaultId: string, options?: ApiRequestOptions) {
+  return (await call<{ pages: LockedPageSummary[] }>('GET', `/api/vaults/${vaultId}/locked-pages`, undefined, options)).pages;
+}
+
+/** Fetches the working copy for editing. The server records this read in the audit trail. */
+export async function getLockedPageApi(vaultId: string, pageId: string, options?: ApiRequestOptions) {
+  return (await call<{ page: { id: string; title: string; content: string; published: boolean } }>('GET', `/api/vaults/${vaultId}/locked-pages/${pageId}`, undefined, options)).page;
+}
+
+export async function saveLockedPageApi(vaultId: string, pageId: string, page: { title: string; content: string }, options?: ApiRequestOptions) {
+  return call<{ page_id: string; draft_id: string }>('PUT', `/api/vaults/${vaultId}/locked-pages/${pageId}`, page, options);
+}
+
+/** Owners only. */
+export async function publishLockedPageApi(vaultId: string, pageId: string, options?: ApiRequestOptions) {
+  return call<{ version_id: string }>('POST', `/api/vaults/${vaultId}/locked-pages/${pageId}/publish`, {}, options);
+}
+
+export async function deleteLockedPageApi(vaultId: string, pageId: string, options?: ApiRequestOptions) {
+  return call<{ success: boolean }>('DELETE', `/api/vaults/${vaultId}/locked-pages/${pageId}`, undefined, options);
+}
