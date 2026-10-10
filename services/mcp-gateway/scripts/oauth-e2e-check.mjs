@@ -154,17 +154,51 @@ async function run() {
   const action = /<form[^>]*action="([^"]+)"/.exec(html)?.[1]?.replace(/&amp;/g, '&');
   if (!check('authorization endpoint shows the sign-in form', loginPage.status === 200 && Boolean(action), `HTTP ${loginPage.status}`)) return;
 
-  let location = '';
+  // Cookie jar for the authorization server session
+  const jar = new Map(loginPage.headers.getSetCookie().map((c) => c.split(';')[0].split(/=(.*)/s).slice(0, 2)));
+  const cookieHeader = () => [...jar].map(([k, v]) => `${k}=${v}`).join('; ');
+  const remember = (res) => res.headers.getSetCookie().forEach((c) => {
+    const [k, v] = c.split(';')[0].split(/=(.*)/s);
+    jar.set(k, v);
+  });
+
   let step = await fetch(action, {
     method: 'POST', redirect: 'manual',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookies },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookieHeader() },
     body: form({ username: USER_EMAIL, password: USER_PASSWORD, credentialId: '' }),
   });
-  location = step.headers.get('location') || '';
-  const redirect = location ? new URL(location) : null;
+  remember(step);
+  let location = step.headers.get('location') || '';
+  const trail = [];
+  // The server may show further pages of its own before returning to the client. A client that
+  // registered itself is unknown to the user, so the server asks for consent; the user grants it.
+  for (let hop = 0; hop < 6 && !location.startsWith(REDIRECT_URI); hop++) {
+    let page = step;
+    if (location) {
+      trail.push(new URL(location, KEYCLOAK).pathname.split('/').slice(-2).join('/'));
+      page = await fetch(new URL(location, KEYCLOAK), { redirect: 'manual', headers: { Cookie: cookieHeader() } });
+      remember(page);
+      location = page.headers.get('location') || '';
+      if (location) { step = page; continue; }
+    }
+    const body = await page.text();
+    const nextAction = /<form[^>]*action="([^"]+)"/.exec(body)?.[1]?.replace(/&amp;/g, '&');
+    if (!nextAction) { trail.push(`no form (HTTP ${page.status})`); break; }
+    const isConsent = /name="accept"/.test(body);
+    trail.push(isConsent ? 'consent' : `form:${/<title>([^<]*)/.exec(body)?.[1]?.trim() || '?'}`);
+    if (!isConsent) break;
+    step = await fetch(new URL(nextAction, KEYCLOAK), {
+      method: 'POST', redirect: 'manual',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookieHeader() },
+      body: form({ accept: 'Yes' }),
+    });
+    remember(step);
+    location = step.headers.get('location') || '';
+  }
+  const redirect = location.startsWith(REDIRECT_URI) ? new URL(location) : null;
   const code = redirect?.searchParams.get('code');
-  if (!check('sign-in redirects back to the client with a code and the same state',
-    Boolean(code) && redirect.searchParams.get('state') === state && location.startsWith(REDIRECT_URI), `HTTP ${step.status}`)) return;
+  if (!check('sign-in (and consent for the new client) redirects back with a code and the same state',
+    Boolean(code) && redirect.searchParams.get('state') === state, `HTTP ${step.status}${trail.length ? `, via ${trail.join(' > ')}` : ''}`)) return;
 
   // A code is useless without the PKCE verifier
   const stolen = await json(await fetch(meta.token_endpoint, {
@@ -174,7 +208,7 @@ async function run() {
   check('token endpoint rejects a wrong PKCE verifier', !stolen.access_token, stolen.error || '');
 
   // 6. A fresh code (the first one is now spent) exchanged with the right verifier
-  const second = await fetch(authorizeUrl, { redirect: 'manual', headers: { Cookie: `${cookies}; ${step.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ')}` } });
+  const second = await fetch(authorizeUrl, { redirect: 'manual', headers: { Cookie: cookieHeader() } });
   const code2 = new URL(second.headers.get('location') || 'http://x/').searchParams.get('code');
   const tokens = await json(await fetch(meta.token_endpoint, {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

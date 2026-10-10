@@ -2424,9 +2424,13 @@ export { app };
 if (process.env.NODE_ENV !== 'test' && process.env.SKIP_SERVER_LISTEN !== 'true') {
   (async () => {
     try {
-      console.log('[API Server] Ensuring database migrations are applied...');
-      await runMigrations();
-      console.log('[API Server] Database migrations verified.');
+      // Deployments that run the migration job set RUN_MIGRATIONS_ON_START=false: there the API
+      // connects as a role that cannot change the schema
+      if (process.env.RUN_MIGRATIONS_ON_START !== 'false') {
+        console.log('[API Server] Ensuring database migrations are applied...');
+        await runMigrations();
+        console.log('[API Server] Database migrations verified.');
+      }
     } catch (err) {
       console.error('[API Server] Failed to run database migrations on startup:', err);
       process.exit(1);

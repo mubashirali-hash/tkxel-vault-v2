@@ -122,8 +122,10 @@ jobs:
           --health-retries 5
 
     env:
+      OWNER_DB: -e DATABASE_URL=postgres://postgres:postgrespassword@localhost:5432/tkxel_vault
       STACK_ENV: >-
-        -e DATABASE_URL=postgres://postgres:postgrespassword@localhost:5432/tkxel_vault
+        -e DATABASE_URL=postgres://tkxel_app:ci-app-role-password@localhost:5432/tkxel_vault
+        -e RUN_MIGRATIONS_ON_START=false
         -e REDIS_URL=redis://localhost:6379
         -e RUNNER_SHARED_SECRET=ci-boot-check-runner-secret-0123456789abcdef
         -e SSO_WEBHOOK_SECRET=ci-boot-check-webhook-secret-0123456789
@@ -139,8 +141,19 @@ jobs:
             docker build --target "$target" -t "tkxel-vault/$target:ci" .
           done
 
-      - name: Apply migrations with the migration image
-        run: docker run --rm --network host $STACK_ENV tkxel-vault/migration:ci
+      - name: Create the application role, then apply migrations as the schema owner
+        run: |
+          docker run --rm --network host -e PGPASSWORD=postgrespassword -e PGHOST=localhost -e POSTGRES_USER=postgres -e POSTGRES_DB=tkxel_vault -e APP_DB_PASSWORD=ci-app-role-password -v "$PWD/scripts/init-db-app-role.sh:/init-db-app-role.sh:ro" pgvector/pgvector:pg16 bash /init-db-app-role.sh
+          docker run --rm --network host $OWNER_DB tkxel-vault/migration:ci
+
+      - name: The application role cannot alter the schema or the audit trail
+        run: |
+          run_as_app() { docker run --rm --network host -e PGPASSWORD=ci-app-role-password pgvector/pgvector:pg16 psql -h localhost -U tkxel_app -d tkxel_vault -v ON_ERROR_STOP=1 -c "$1"; }
+          run_as_app "SELECT count(*) FROM vaults"
+          run_as_app "INSERT INTO audit_events (actor_id, action, target_id) VALUES ('ci', 'boot_check', 'ci')"
+          for statement in "DELETE FROM audit_events" "ALTER TABLE audit_events DISABLE TRIGGER ALL" "DROP TABLE pages CASCADE" "CREATE TABLE public.injected (id int)"; do
+            if run_as_app "$statement"; then echo "application role was allowed: $statement"; exit 1; fi
+          done
 
       - name: Production mode refuses to start without an approved KMS and model key
         run: |
@@ -231,9 +244,13 @@ jobs:
 
       - name: Start Keycloak
         run: |
-          echo "KEYCLOAK_ADMIN_PASSWORD=kc-$(openssl rand -hex 12)" >> "$GITHUB_ENV"
-          echo "E2E_USER_PASSWORD=e2e-$(openssl rand -hex 12)" >> "$GITHUB_ENV"
-          source <(tail -2 "$GITHUB_ENV" | sed 's/^/export /')
+          # One-run passwords for a throwaway Keycloak; masked so they do not appear in the log
+          KEYCLOAK_ADMIN_PASSWORD="kc-$(openssl rand -hex 12)"
+          E2E_USER_PASSWORD="e2e-$(openssl rand -hex 12)"
+          echo "::add-mask::$KEYCLOAK_ADMIN_PASSWORD"
+          echo "::add-mask::$E2E_USER_PASSWORD"
+          echo "KEYCLOAK_ADMIN_PASSWORD=$KEYCLOAK_ADMIN_PASSWORD" >> "$GITHUB_ENV"
+          echo "E2E_USER_PASSWORD=$E2E_USER_PASSWORD" >> "$GITHUB_ENV"
           docker run -d --name keycloak --network host -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$KEYCLOAK_ADMIN_PASSWORD" quay.io/keycloak/keycloak:26.0 start-dev --http-port=8080
 
       - name: Install and build
