@@ -335,3 +335,33 @@ test('Anthropic-compatible endpoint: plain Messages request, no Anthropic beta f
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test('Model client selection: compatible endpoints and the development model CLI never apply in production', async () => {
+  const { createClaudeClient, CliModelClient, MockClaudeClient: Mock } = await import('../dist/orchestrator/claude-connector.js');
+  const names = ['NODE_ENV', 'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_COMPATIBLE_ENDPOINT', 'LLM_CLI_COMMAND'];
+  const saved = Object.fromEntries(names.map((n) => [n, process.env[n]]));
+  const set = (values) => {
+    for (const n of names) delete process.env[n];
+    Object.assign(process.env, values);
+  };
+  try {
+    set({ NODE_ENV: 'development' });
+    assert.ok(createClaudeClient() instanceof Mock);
+
+    // A key in another provider's format is only accepted when the endpoint is declared compatible
+    set({ NODE_ENV: 'development', ANTHROPIC_API_KEY: 'other-provider-key', ANTHROPIC_BASE_URL: 'https://llm.example.test/anthropic' });
+    assert.ok(createClaudeClient() instanceof Mock);
+    set({ NODE_ENV: 'development', ANTHROPIC_API_KEY: 'other-provider-key', ANTHROPIC_BASE_URL: 'https://llm.example.test/anthropic', ANTHROPIC_COMPATIBLE_ENDPOINT: 'true' });
+    assert.ok(createClaudeClient() instanceof AnthropicClaudeClient);
+    set({ NODE_ENV: 'production', ANTHROPIC_API_KEY: 'other-provider-key', ANTHROPIC_BASE_URL: 'https://llm.example.test/anthropic', ANTHROPIC_COMPATIBLE_ENDPOINT: 'true' });
+    assert.ok(createClaudeClient() instanceof AnthropicClaudeClient, 'an explicitly configured compatible endpoint is an operator decision');
+
+    set({ NODE_ENV: 'development', LLM_CLI_COMMAND: 'some-model-cli' });
+    assert.ok(createClaudeClient() instanceof CliModelClient);
+    set({ NODE_ENV: 'production', LLM_CLI_COMMAND: 'some-model-cli' });
+    assert.throws(() => createClaudeClient(), /must be configured in production/);
+    await assert.rejects(new CliModelClient('some-model-cli').createMessage({ system: 's', messages: [] }), /cannot be used in production/);
+  } finally {
+    set(Object.fromEntries(Object.entries(saved).filter(([, v]) => v !== undefined)));
+  }
+});

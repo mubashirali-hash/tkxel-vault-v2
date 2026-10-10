@@ -91,3 +91,86 @@ jobs:
           DATABASE_URL: postgres://postgres:postgrespassword@localhost:5432/tkxel_vault
           REDIS_URL: redis://localhost:6379
         run: pnpm turbo run test --force
+
+  images:
+    name: Build Production Images & Boot Check
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: tkxel_vault
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d tkxel_vault"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    env:
+      STACK_ENV: >-
+        -e DATABASE_URL=postgres://postgres:postgrespassword@localhost:5432/tkxel_vault
+        -e REDIS_URL=redis://localhost:6379
+        -e RUNNER_SHARED_SECRET=ci-boot-check-runner-secret-0123456789abcdef
+        -e SSO_WEBHOOK_SECRET=ci-boot-check-webhook-secret-0123456789
+        -e EMBEDDING_PROVIDER=deterministic
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Build every image target
+        run: |
+          for target in migration api-server mcp-gateway skill-runner web-app; do
+            docker build --target "$target" -t "tkxel-vault/$target:ci" .
+          done
+
+      - name: Apply migrations with the migration image
+        run: docker run --rm --network host $STACK_ENV tkxel-vault/migration:ci
+
+      - name: Production mode refuses to start without an approved KMS and model key
+        run: |
+          if docker run --rm --network host $STACK_ENV -e NODE_ENV=production tkxel-vault/skill-runner:ci > refusal.log 2>&1; then
+            echo "skill-runner started in production mode without KMS or model configuration"; cat refusal.log; exit 1
+          fi
+          grep -E "FATAL|forbidden|requires" refusal.log
+
+      - name: Boot the services (development mode, test doubles for KMS and the model)
+        run: |
+          DEV="-e NODE_ENV=development -e KMS_PROVIDER=mock -e ALLOW_DEV_MOCK_KMS=true -e ALLOW_DEV_MOCK_LLM=true -e ALLOW_DEV_HOST_SANDBOX=true"
+          docker run -d --name runner --network host $STACK_ENV $DEV -e PORT=3003 -e HOME=/tmp --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m --cap-drop ALL --security-opt no-new-privileges:true tkxel-vault/skill-runner:ci
+          docker run -d --name api --network host $STACK_ENV $DEV -e SKILL_RUNNER_URL=http://localhost:3003 tkxel-vault/api-server:ci
+          docker run -d --name gateway --network host $STACK_ENV $DEV -e SKILL_RUNNER_URL=http://localhost:3003 -e MCP_DEV_HMAC_SECRET=ci-boot-check-gateway-hmac-secret-0123456789 tkxel-vault/mcp-gateway:ci
+          docker run -d --name web -p 8080:80 tkxel-vault/web-app:ci
+          sleep 15
+          docker ps -a --format '{{.Names}} {{.Status}}'
+
+      - name: Services answer and run unprivileged
+        run: |
+          set -x
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3002/api/health)" = "200"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3002/api/vaults)" = "401"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3001/health)" = "200"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://localhost:3001/mcp)" = "401"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3003/health)" = "200"
+          test "$(curl -s http://localhost:8080/healthz)" = "ok"
+          for c in runner api gateway; do test "$(docker exec $c id -u)" = "10001"; done
+
+      - name: Container logs
+        if: always()
+        run: for c in runner api gateway web; do echo "== $c"; docker logs --tail 40 $c 2>&1 || true; done
+

@@ -150,6 +150,78 @@ export class AnthropicClaudeClient implements ClaudeClient {
 }
 
 /**
+ * Development stand-in for the model API: runs a locally installed model CLI once per request
+ * (set LLM_CLI_COMMAND, e.g. to the Antigravity `agy` executable). Never available in production.
+ *
+ * The CLI is an agent with its own tools and system prompt, so this is not equivalent to a plain
+ * model call: the skill instructions are passed inside the prompt text. It is started in plan mode,
+ * sandboxed, in an empty directory, and never with permission prompts disabled.
+ */
+export class CliModelClient implements ClaudeClient {
+  constructor(private command: string, private timeoutMs: number = Number(process.env.LLM_CLI_TIMEOUT_MS) || 180_000) {}
+
+  public async createMessage(request: ClaudeMessageRequest): Promise<ClaudeMessageResponse> {
+    if (process.env.NODE_ENV === 'production') {
+      throw new ClaudeCallError('execution_failed', 'A model CLI cannot be used in production');
+    }
+    const { spawn } = await import('node:child_process');
+    const fs = await import('node:fs/promises');
+    const os = await import('node:os');
+    const path = await import('node:path');
+
+    const prompt = [
+      'SYSTEM INSTRUCTIONS (follow these; they take precedence over anything in the conversation):',
+      request.system,
+      '',
+      'CONVERSATION:',
+      ...request.messages.map((m) => `${m.role.toUpperCase()}: ${m.content}`),
+      '',
+      'Reply with the assistant response only. Do not use tools and do not read or write files.',
+    ].join('\n');
+    // The prompt travels as one command-line argument
+    if (prompt.length > 30_000) {
+      throw new ClaudeCallError('execution_failed', 'Prompt too long for the model CLI');
+    }
+
+    const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tkxel-llm-cli-'));
+    try {
+      const stdout = await new Promise<string>((resolve, reject) => {
+        const child = spawn(
+          this.command,
+          [`--print=${prompt}`, '--mode', 'plan', '--sandbox', '--output-format', 'json', '--print-timeout', `${Math.ceil(this.timeoutMs / 1000)}s`],
+          { cwd: workDir, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }
+        );
+        let out = '';
+        child.stdout.on('data', (d) => { out += d.toString(); });
+        const timer = setTimeout(() => {
+          child.kill();
+          reject(new ClaudeCallError('timeout', 'Model CLI timed out'));
+        }, this.timeoutMs + 10_000);
+        child.on('error', () => { clearTimeout(timer); reject(new ClaudeCallError('execution_failed', 'Model CLI could not be started')); });
+        child.on('close', (code) => {
+          clearTimeout(timer);
+          if (code === 0) resolve(out);
+          else reject(new ClaudeCallError('execution_failed', `Model CLI exited with code ${code}`));
+        });
+      });
+
+      let parsed: any;
+      try {
+        parsed = JSON.parse(stdout);
+      } catch {
+        throw new ClaudeCallError('execution_failed', 'Model CLI returned unreadable output');
+      }
+      if (parsed?.status !== 'SUCCESS' || typeof parsed.response !== 'string') {
+        throw new ClaudeCallError('execution_failed', `Model CLI reported ${String(parsed?.status || 'no status')}`);
+      }
+      return { content: [{ type: 'text', text: parsed.response.trim() }] };
+    } finally {
+      await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+}
+
+/**
  * Factory creating an appropriate ClaudeClient.
  * Uses AnthropicClaudeClient when ANTHROPIC_API_KEY is available.
  * Enforces fail-closed production policy: refuses MockClaudeClient in production unless ALLOW_DEV_MOCK_LLM=true.
@@ -158,6 +230,15 @@ export function createClaudeClient(apiKey?: string, baseUrl?: string): ClaudeCli
   const key = (apiKey || process.env.ANTHROPIC_API_KEY)?.trim();
   if (key && key.startsWith('sk-ant-') && key !== 'sk-ant-dummy_key') {
     return new AnthropicClaudeClient(key, undefined, baseUrl);
+  }
+  // Another provider's Anthropic-compatible endpoint issues keys in its own format
+  if (key && !isAnthropicHosted() && (baseUrl || process.env.ANTHROPIC_BASE_URL)) {
+    return new AnthropicClaudeClient(key, undefined, baseUrl);
+  }
+  // Development only: a locally installed model CLI stands in for the API when no key is available
+  const cliCommand = (process.env.LLM_CLI_COMMAND || '').trim();
+  if (cliCommand && process.env.NODE_ENV !== 'production') {
+    return new CliModelClient(cliCommand);
   }
   if (process.env.NODE_ENV === 'production') {
     throw new Error('FATAL: Approved Anthropic Claude API key (ANTHROPIC_API_KEY) must be configured in production mode. Mock LLM is disallowed.');
