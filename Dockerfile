@@ -6,6 +6,14 @@ WORKDIR /app
 # The lockfile is the dependency source of truth. The build context excludes
 # local dependencies, generated assets, secrets, and Git history.
 COPY . .
+
+# Web bundle configuration is fixed at build time. Leave unset for local defaults; the TLS overlay sets
+# VITE_API_URL=/api so the browser talks to the same origin that served the page.
+ARG VITE_API_URL
+ARG VITE_GOOGLE_CLIENT_ID
+ARG VITE_ALLOWED_EMAIL_DOMAINS
+ENV VITE_API_URL=${VITE_API_URL}     VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}     VITE_ALLOWED_EMAIL_DOMAINS=${VITE_ALLOWED_EMAIL_DOMAINS}
+
 RUN pnpm config set ignore-scripts true \
   && pnpm install --frozen-lockfile \
   && pnpm run build

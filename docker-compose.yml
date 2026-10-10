@@ -58,6 +58,24 @@ services:
       - REDIS_URL=redis://redis:6379
       - SKILL_RUNNER_URL=http://skill-runner:3003
       - RUNNER_SHARED_SECRET=${RUNNER_SHARED_SECRET:?RUNNER_SHARED_SECRET is required}
+      # SSO: set GOOGLE_CLIENT_ID (Google Workspace) and/or OIDC_ISSUER + OIDC_AUDIENCE (e.g. Microsoft Entra ID).
+      # With neither, the gateway refuses to start and the API rejects every sign-in.
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - OIDC_ISSUER=${OIDC_ISSUER:-}
+      - OIDC_AUDIENCE=${OIDC_AUDIENCE:-}
+      - OIDC_JWKS_URI=${OIDC_JWKS_URI:-}
+      - ALLOWED_EMAIL_DOMAINS=${ALLOWED_EMAIL_DOMAINS:-}
+      # Every service that reads or writes vault content needs the same KMS and embedding configuration
+      - KMS_PROVIDER=${KMS_PROVIDER:?KMS_PROVIDER is required}
+      - AWS_KMS_KEY_ID=${AWS_KMS_KEY_ID:-}
+      - AWS_REGION=${AWS_REGION:-}
+      - AZURE_KEY_VAULT_URL=${AZURE_KEY_VAULT_URL:-}
+      - AZURE_KEY_VAULT_KEY_NAME=${AZURE_KEY_VAULT_KEY_NAME:-}
+      - AZURE_KEY_VAULT_BEARER_TOKEN=${AZURE_KEY_VAULT_BEARER_TOKEN:-}
+      - ALLOW_DEV_MOCK_KMS=${ALLOW_DEV_MOCK_KMS:-false}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:?EMBEDDING_PROVIDER is required}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
     ports:
       - "3002:3002"
     depends_on:
@@ -107,6 +125,7 @@ services:
       - AZURE_KEY_VAULT_KEY_NAME=${AZURE_KEY_VAULT_KEY_NAME:-}
       - AZURE_KEY_VAULT_BEARER_TOKEN=${AZURE_KEY_VAULT_BEARER_TOKEN:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY is required}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-opus-5-5}
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:?EMBEDDING_PROVIDER is required}
       - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
@@ -133,7 +152,32 @@ services:
       - REDIS_URL=redis://redis:6379
       - SKILL_RUNNER_URL=http://skill-runner:3003
       - RUNNER_SHARED_SECRET=${RUNNER_SHARED_SECRET:?RUNNER_SHARED_SECRET is required}
+      # SSO: set GOOGLE_CLIENT_ID (Google Workspace) and/or OIDC_ISSUER + OIDC_AUDIENCE (e.g. Microsoft Entra ID).
+      # With neither, the gateway refuses to start and the API rejects every sign-in.
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - OIDC_ISSUER=${OIDC_ISSUER:-}
+      - OIDC_AUDIENCE=${OIDC_AUDIENCE:-}
+      - OIDC_JWKS_URI=${OIDC_JWKS_URI:-}
+      - ALLOWED_EMAIL_DOMAINS=${ALLOWED_EMAIL_DOMAINS:-}
+      # Every service that reads or writes vault content needs the same KMS and embedding configuration
+      - KMS_PROVIDER=${KMS_PROVIDER:?KMS_PROVIDER is required}
+      - AWS_KMS_KEY_ID=${AWS_KMS_KEY_ID:-}
+      - AWS_REGION=${AWS_REGION:-}
+      - AZURE_KEY_VAULT_URL=${AZURE_KEY_VAULT_URL:-}
+      - AZURE_KEY_VAULT_KEY_NAME=${AZURE_KEY_VAULT_KEY_NAME:-}
+      - AZURE_KEY_VAULT_BEARER_TOKEN=${AZURE_KEY_VAULT_BEARER_TOKEN:-}
+      - ALLOW_DEV_MOCK_KMS=${ALLOW_DEV_MOCK_KMS:-false}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:?EMBEDDING_PROVIDER is required}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
       - SSO_WEBHOOK_SECRET=${SSO_WEBHOOK_SECRET:?SSO_WEBHOOK_SECRET is required}
+      # Public HTTPS URL of the gateway, advertised to MCP clients for OAuth discovery
+      - MCP_PUBLIC_URL=${MCP_PUBLIC_URL:-}
+      - OAUTH_AUTHORIZATION_SERVERS=${OAUTH_AUTHORIZATION_SERVERS:-}
+      - MCP_ALLOWED_ORIGINS=${MCP_ALLOWED_ORIGINS:-}
+      # Required when running more than one gateway replica
+      - MCP_SESSION_SECRET=${MCP_SESSION_SECRET:-}
+      - SECURITY_ALERT_WEBHOOK_URL=${SECURITY_ALERT_WEBHOOK_URL:-}
     ports:
       - "3001:3001"
     depends_on:

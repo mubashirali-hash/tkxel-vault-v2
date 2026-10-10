@@ -4,7 +4,7 @@ packages:
   - "apps/*"
 
 allowBuilds:
-  esbuild: set this to true or false
+  esbuild: true
 
 overrides:
   drizzle-orm: "^0.45.2"

@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "api-server",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set PORT=3012&& node apps/api-server/dist/server.js"],
+      "port": 3012,
+      "autoPort": false
+    },
+    {
+      "name": "web-app",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set VITE_ENABLE_DEV_AUTH_BYPASS=true&& set VITE_API_URL=http://localhost:3012/api&& pnpm --filter @tkxel-vault/web-app dev"],
+      "port": 3000
+    }
+  ]
+}

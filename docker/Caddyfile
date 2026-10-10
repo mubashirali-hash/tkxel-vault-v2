@@ -1,0 +1,34 @@
+# TLS termination for tkxel Vault (NFR-03).
+# Caddy obtains and renews certificates for {$VAULT_DOMAIN} automatically and serves TLS 1.2 and 1.3 only.
+# Everything is served from one origin, so the browser needs no cross-origin access:
+#   /mcp, OAuth discovery, SSO webhook  -> MCP gateway
+#   /api/*                              -> API server
+#   everything else                     -> web app
+{
+	email {$ACME_EMAIL}
+}
+
+{$VAULT_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	@gateway path /mcp /.well-known/oauth-protected-resource /.well-known/oauth-protected-resource/* /api/sso/deprovision
+	handle @gateway {
+		reverse_proxy mcp-gateway:3001
+	}
+
+	handle /api/* {
+		reverse_proxy api-server:3002
+	}
+
+	handle {
+		reverse_proxy web-app:80
+	}
+}
