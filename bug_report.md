@@ -550,3 +550,16 @@ PostgreSQL tuning (2 GB shared buffers, 32 MB work memory) changed the load resu
 
 Every server feature in this audit now has a screen.
 
+### In-house penetration pass (2026-10-10)
+
+This is the project's own adversarial testing. It is recorded separately from 15.46 because it is not independent, and NFR-08 asks for an independent test.
+
+- [x] **15.62** In-house penetration pass over the HTTP API, run against the real server and database:
+  - **Outsiders** (`route-auth-matrix.test.js`): all 57 routes, read from the router itself, refuse anonymous callers; a signed-in outsider gets no data, no success on any vault-scoped route and no server error (114 requests, open and locked vault).
+  - **Insiders above their role** (`insider-privilege-escalation.test.js`): for each of the 39 routes that declare required roles, a Reader, an Editor and a Consumer call every route their role is not listed for, sending a body that tries the obvious escalations (role, owner, vault, mode, export policy, publish status). 102 requests, all refused; vault settings, shares, pages and versions unchanged afterwards; no draft text reaches a Reader through any route a Reader may call.
+  - **Hostile input**: SQL injection strings, NUL bytes, path traversal, template and script payloads and 5,000-character values in search text, filters and identifiers.
+  - **Two defects found and fixed.** A vault or page identifier that is not a UUID made the server answer 500 instead of a refusal; it now answers `not_found`. A NUL character in a URL or JSON body reached PostgreSQL and came back as 500; such requests are now refused with 400 before any handler runs. Neither exposed data: every query involved is parameterised.
+  - Not covered here: the web app in a browser (stored content rendering, session handling), denial of service, the deployed network perimeter, dependency vulnerabilities, and anything an independent tester would think of that the authors did not.
+
+**15.46 stays open.** Everything that can be tested from inside the project has been; the remaining action is to commission an outside firm, which only the project owner can do.
+

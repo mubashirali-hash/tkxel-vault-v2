@@ -43,6 +43,7 @@ Verified against something real since the last audit:
 | OAuth 2.1 for MCP clients | Unknown client against Keycloak 26 and the gateway: discovery, registration, PKCE sign-in, consent, token audience, tool calls | 15 of 15 checks |
 | Skill sandbox | gVisor (`runsc`) on Ubuntu: non-root, isolated kernel, read-only root, no network, timeout cleanup, memory limit | 12 of 12 checks |
 | API authorization | Every API route (57) called anonymously and as a signed-in outsider, on an open and a locked vault | No route serves or fails open |
+| Privilege escalation | Reader, Editor and Consumer calling every role-protected route above their role (102 requests) with escalation payloads; hostile input in search and identifiers | All refused, nothing changed; two error-handling defects found and fixed |
 | Live model | 22 exfiltration attacks over HTTP against the real skill-runner server, with a live model (Google Antigravity CLI) in place of the scripted one | 21 passed; 1 timed out in the model CLI and passed when rerun |
 | Performance (developer laptop) | 10,000 pages, 200 users with 2 s think time | Search p95 35 to 50 ms in 22 of 25 runs |
 
