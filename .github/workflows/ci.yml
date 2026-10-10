@@ -151,7 +151,7 @@ jobs:
 
       - name: Boot the services (development mode, test doubles for KMS and the model)
         run: |
-          DEV="-e NODE_ENV=development -e KMS_PROVIDER=mock -e ALLOW_DEV_MOCK_KMS=true -e ALLOW_DEV_MOCK_LLM=true -e ALLOW_DEV_HOST_SANDBOX=true"
+          DEV="-e NODE_ENV=development -e KMS_PROVIDER=mock -e ALLOW_DEV_MOCK_KMS=true -e ALLOW_DEV_MOCK_LLM=true -e ALLOW_DEV_HOST_SANDBOX=true -e ENABLE_DEV_AUTH_BYPASS=true"
           docker run -d --name runner --network host $STACK_ENV $DEV -e PORT=3003 -e HOME=/tmp --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m --cap-drop ALL --security-opt no-new-privileges:true tkxel-vault/skill-runner:ci
           docker run -d --name api --network host $STACK_ENV $DEV -e SKILL_RUNNER_URL=http://localhost:3003 tkxel-vault/api-server:ci
           docker run -d --name gateway --network host $STACK_ENV $DEV -e SKILL_RUNNER_URL=http://localhost:3003 -e MCP_DEV_HMAC_SECRET=ci-boot-check-gateway-hmac-secret-0123456789 tkxel-vault/mcp-gateway:ci
