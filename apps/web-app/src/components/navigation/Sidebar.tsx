@@ -1,3 +1,4 @@
+import { SearchFilters, NO_FILTERS, hasActiveFilters, buildSearchQuery, matchesFilters } from '../../utils/search-filters.js';
 import { API_URL } from '../../utils/api-base.js';
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -70,6 +71,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCloseNavigation,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
+  const [filters, setFilters] = useState<SearchFilters>(NO_FILTERS);
+  const [showFilters, setShowFilters] = useState(false);
   const [searchResults, setSearchResults] = useState<Page[] | null>(null);
   const [isNewFolderOpen, setIsNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
@@ -146,16 +149,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
   useEffect(() => {
     const query = searchQuery.trim();
     if (!query) {
-      setSearchResults(null);
+      // Filters alone narrow the list from what is already loaded
+      setSearchResults(hasActiveFilters(filters) ? vaultPages.filter((page) => matchesFilters(page, filters)) : null);
       return;
     }
 
     const fallback = () => {
       const normalized = query.toLowerCase();
       setSearchResults(vaultPages.filter((page) =>
-        page.title.toLowerCase().includes(normalized)
-        || (page.folder && page.folder.toLowerCase().includes(normalized))
-        || page.tags?.some((tag) => tag.toLowerCase().includes(normalized)),
+        matchesFilters(page, filters) && (
+          page.title.toLowerCase().includes(normalized)
+          || (page.folder && page.folder.toLowerCase().includes(normalized))
+          || page.tags?.some((tag) => tag.toLowerCase().includes(normalized))
+        ),
       ));
     };
 
@@ -169,7 +175,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }
         const apiUrl = API_URL;
         const response = await fetch(
-          `${apiUrl}/search?vaultId=${currentVault.id}&q=${encodeURIComponent(query)}`,
+          `${apiUrl}/search?${buildSearchQuery(currentVault.id, query, filters)}`,
           { headers, signal: controller.signal },
         );
         if (!response.ok) throw new Error('Search unavailable');
@@ -185,7 +191,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [currentVault.id, pages, searchQuery]);
+  }, [currentVault.id, pages, searchQuery, filters]);
 
   useEffect(() => {
     if (!isNavigationOpen) return;
@@ -474,6 +480,44 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onChange={(event) => setSearchQuery(event.target.value)}
             />
           </label>
+          <div style={{ width: '100%' }}>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              aria-expanded={showFilters}
+              onClick={() => setShowFilters(!showFilters)}
+              style={{ padding: '2px 6px', fontSize: '0.74rem' }}
+            >
+              Filters{hasActiveFilters(filters) ? ' (on)' : ''}
+            </button>
+            {showFilters && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px', fontSize: '0.76rem' }}>
+                <label>
+                  Type
+                  <select aria-label="Filter by type" value={filters.type} onChange={(event) => setFilters({ ...filters, type: event.target.value })} style={{ width: '100%' }}>
+                    <option value="">Any type</option>
+                    {Array.from(new Set(vaultPages.map((page) => page.type || 'note'))).sort().map((type) => <option key={type} value={type}>{type}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Tag
+                  <select aria-label="Filter by tag" value={filters.tag} onChange={(event) => setFilters({ ...filters, tag: event.target.value })} style={{ width: '100%' }}>
+                    <option value="">Any tag</option>
+                    {Array.from(new Set(vaultPages.flatMap((page) => page.tags || []))).sort((a, b) => a.localeCompare(b)).map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Updated on or after
+                  <input type="date" aria-label="Filter by updated date" value={filters.updatedFrom} onChange={(event) => setFilters({ ...filters, updatedFrom: event.target.value })} style={{ width: '100%' }} />
+                </label>
+                {hasActiveFilters(filters) && (
+                  <button type="button" className="btn btn-ghost" onClick={() => setFilters(NO_FILTERS)} style={{ padding: '2px 6px', fontSize: '0.74rem', alignSelf: 'flex-start' }}>
+                    Clear filters
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="notes-sidebar__list">
