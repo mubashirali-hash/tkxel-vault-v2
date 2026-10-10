@@ -45,6 +45,10 @@ USER 10001:10001
 CMD ["node", "services/mcp-gateway/dist/start.js"]
 
 FROM runtime-base AS skill-runner
+# Skill helper scripts run in gVisor sandboxes on a separate sandbox host. The runner only needs the
+# docker client to reach that host's daemon over mutual TLS (DOCKER_HOST, DOCKER_TLS_VERIFY,
+# DOCKER_CERT_PATH); it has no access to the daemon of the host it runs on.
+RUN apk add --no-cache docker-cli
 EXPOSE 3003
 USER 10001:10001
 CMD ["node", "services/skill-runner/dist/server.js"]

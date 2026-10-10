@@ -169,6 +169,9 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3003/health)" = "200"
           test "$(curl -s http://localhost:8080/healthz)" = "ok"
           for c in runner api gateway; do test "$(docker exec $c id -u)" = "10001"; done
+          # The runner carries a docker client for the remote sandbox host, and no local daemon socket
+          docker exec runner docker --version
+          ! docker exec runner test -S /var/run/docker.sock
 
       - name: Container logs
         if: always()

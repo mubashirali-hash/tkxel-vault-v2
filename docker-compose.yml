@@ -97,6 +97,9 @@ services:
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
+    volumes:
+      # Client certificate for the sandbox host (ca.pem, cert.pem, key.pem), readable by uid 10001
+      - ${SANDBOX_CERT_DIR:-./sandbox-certs}:/run/sandbox-certs:ro
     cap_drop:
       - ALL
     security_opt:
@@ -115,6 +118,12 @@ services:
       - PORT=3003
       - RUNNER_SHARED_SECRET=${RUNNER_SHARED_SECRET:?RUNNER_SHARED_SECRET is required}
       - SANDBOX_RUNTIME=runsc
+      # Sandbox host: a separate machine whose Docker daemon has the gVisor runtime (runsc) and accepts
+      # only mutual-TLS connections. Without DOCKER_HOST, skills with helper scripts are refused.
+      - USE_DOCKER_SANDBOX=${USE_DOCKER_SANDBOX:-true}
+      - DOCKER_HOST=${SANDBOX_DOCKER_HOST:-}
+      - DOCKER_TLS_VERIFY=${SANDBOX_DOCKER_TLS_VERIFY:-1}
+      - DOCKER_CERT_PATH=/run/sandbox-certs
       - ALLOW_DEV_MOCK_KMS=${ALLOW_DEV_MOCK_KMS:-false}
       - ALLOW_DEV_MOCK_LLM=${ALLOW_DEV_MOCK_LLM:-false}
       - ALLOW_DEV_HOST_SANDBOX=${ALLOW_DEV_HOST_SANDBOX:-false}
