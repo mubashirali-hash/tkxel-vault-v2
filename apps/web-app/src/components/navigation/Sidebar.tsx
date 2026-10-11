@@ -1,21 +1,7 @@
 import { SearchFilters, NO_FILTERS, hasActiveFilters, buildSearchQuery, matchesFilters } from '../../utils/search-filters.js';
 import { API_URL } from '../../utils/api-base.js';
 import React, { useEffect, useRef, useState } from 'react';
-import {
-  ChevronDown,
-  ChevronRight,
-  FileText,
-  Folder,
-  FolderOpen,
-  FolderPlus,
-  GripVertical,
-  Plus,
-  Search,
-  Sparkles,
-  Trash2,
-  X,
-  ArrowRight,
-} from 'lucide-react';
+import { ChevronDown, ChevronRight, FileText, Folder, FolderOpen, FolderPlus, GripVertical, Plus, Search, Sparkles, Trash2, X, ArrowRight, SlidersHorizontal } from 'lucide-react';
 import { Page, Vault, VaultRole } from '@tkxel-vault/types';
 import { ActionMenu, ActionMenuItem, Button, Dialog, EmptyState, IconButton } from '../ui/index.js';
 import { Virtuoso } from 'react-virtuoso';
@@ -47,6 +33,9 @@ export interface SidebarProps {
 }
 
 const PRESET_FOLDERS = ['Agents', 'Projects', 'Clients', 'Decisions', 'Architecture'];
+
+/** Folders with more notes than this are windowed while scrolling. */
+const VIRTUALIZE_ABOVE = 150;
 
 export const Sidebar: React.FC<SidebarProps> = ({
   currentVault,
@@ -270,6 +259,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const folderTree = buildFolderTree(allFolders);
 
+  // Ordinary lists are rendered directly, so a folder is exactly as tall as its notes. Only a very
+  // long list is windowed, and then against the sidebar's own scroll area, never in a box of its own.
+  const renderNoteList = (notes: Page[]) => {
+    if (notes.length <= VIRTUALIZE_ABOVE) return notes.map((note) => <React.Fragment key={note.id}>{renderNoteRow(note)}</React.Fragment>);
+    return listElement ? (
+      <Virtuoso
+        customScrollParent={listElement}
+        totalCount={notes.length}
+        itemContent={(index) => renderNoteRow(notes[index])}
+      />
+    ) : null;
+  };
+
   const renderFolderNode = (node: FolderNode, level: number = 0) => {
     const folderName = node.path;
     const folderNotes = pagesByFolder.get(folderName) || [];
@@ -383,13 +385,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 {draggingPageId ? 'Drop item here to add to folder' : 'No items in this folder.'}
               </div>
             ) : (
-              listElement && (
-                <Virtuoso
-                  customScrollParent={listElement}
-                  totalCount={folderNotes.length}
-                  itemContent={(index) => renderNoteRow(folderNotes[index])}
-                />
-              )
+              renderNoteList(folderNotes)
             )}
           </div>
         )}
@@ -420,7 +416,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <div className="notes-sidebar__controls">
           {canEdit && (
-            <div style={{ display: 'flex', gap: '6px', width: '100%' }}>
+            <div className="notes-sidebar__create">
               <Button
                 variant="primary"
                 leadingIcon={<Plus size={15} />}
@@ -429,101 +425,77 @@ export const Sidebar: React.FC<SidebarProps> = ({
               >
                 New Note
               </Button>
-              <Button
-                variant="secondary"
-                leadingIcon={<FolderPlus size={15} />}
-                onClick={() => setIsNewFolderOpen(true)}
-                title="Create a new folder to organize notes"
-                style={{ flex: 1, minWidth: 0 }}
-              >
-                New folder
-              </Button>
+              {/* Everything else that creates something lives in one menu */}
+              <ActionMenu
+                label="More ways to create"
+                compact
+                items={[
+                  { id: 'new-folder', label: 'New folder', icon: <FolderPlus size={16} />, onSelect: () => setIsNewFolderOpen(true) },
+                  ...(onOpenDailyNote
+                    ? [{ id: 'daily-note', label: "Today's daily note", icon: <FileText size={16} />, onSelect: () => closeAfter(() => onOpenDailyNote()) }]
+                    : []),
+                  ...(onCreateFromTemplate
+                    ? ['client', 'person', 'project', 'decision', 'meeting', 'skill'].map((type, index) => ({
+                        id: `template-${type}`,
+                        label: `New ${type} note`,
+                        icon: <FileText size={16} />,
+                        separatorBefore: index === 0,
+                        onSelect: () => closeAfter(() => onCreateFromTemplate(type)),
+                      }))
+                    : []),
+                ]}
+              />
             </div>
           )}
-          {canEdit && (onOpenDailyNote || onCreateFromTemplate) && (
-            <div style={{ display: 'flex', gap: '6px', width: '100%', marginTop: '6px' }}>
-              {onOpenDailyNote && (
-                <Button
-                  variant="secondary"
-                  onClick={() => closeAfter(() => onOpenDailyNote())}
-                  title="Open today's daily note"
-                  style={{ flex: 1, minWidth: 0 }}
-                >
-                  Daily Note
-                </Button>
-              )}
-              {onCreateFromTemplate && (
-                <select
-                  aria-label="Create a note from a template"
-                  value=""
-                  onChange={(event) => {
-                    const type = event.target.value;
-                    if (type) closeAfter(() => onCreateFromTemplate(type));
-                  }}
-                  className="notes-sidebar__template-select"
-                  title="Create a note from a template"
-                >
-                  <option value="">Template…</option>
-                  <option value="client">Client</option>
-                  <option value="person">Person</option>
-                  <option value="project">Project</option>
-                  <option value="decision">Decision</option>
-                  <option value="meeting">Meeting</option>
-                  <option value="skill">Skill</option>
-                </select>
-              )}
-            </div>
-          )}
-          <label className="notes-sidebar__search">
-            <Search size={16} aria-hidden="true" />
-            <span className="sr-only">Search notes and tags</span>
-            <input
-              id="sidebar-vault-search"
-              name="vault-search"
-              type="search"
-              placeholder="Search notes, tags, or content"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-            />
-          </label>
-          <div style={{ width: '100%' }}>
-            <button
-              type="button"
-              className="btn btn-ghost"
+          <div className="notes-sidebar__search-row">
+            <label className="notes-sidebar__search">
+              <Search size={16} aria-hidden="true" />
+              <span className="sr-only">Search notes and tags</span>
+              <input
+                id="sidebar-vault-search"
+                name="vault-search"
+                type="search"
+                placeholder="Search notes, tags, or content"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+              />
+            </label>
+            <IconButton
+              variant="quiet"
+              label={hasActiveFilters(filters) ? 'Search filters (on)' : 'Search filters'}
+              icon={<SlidersHorizontal size={16} />}
               aria-expanded={showFilters}
+              data-active={hasActiveFilters(filters)}
               onClick={() => setShowFilters(!showFilters)}
-              style={{ padding: '2px 6px', fontSize: '0.74rem' }}
-            >
-              Filters{hasActiveFilters(filters) ? ' (on)' : ''}
-            </button>
-            {showFilters && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px', fontSize: '0.76rem' }}>
-                <label>
-                  Type
-                  <select aria-label="Filter by type" value={filters.type} onChange={(event) => setFilters({ ...filters, type: event.target.value })} style={{ width: '100%' }}>
-                    <option value="">Any type</option>
-                    {Array.from(new Set(vaultPages.map((page) => page.type || 'note'))).sort().map((type) => <option key={type} value={type}>{type}</option>)}
-                  </select>
-                </label>
-                <label>
-                  Tag
-                  <select aria-label="Filter by tag" value={filters.tag} onChange={(event) => setFilters({ ...filters, tag: event.target.value })} style={{ width: '100%' }}>
-                    <option value="">Any tag</option>
-                    {Array.from(new Set(vaultPages.flatMap((page) => page.tags || []))).sort((a, b) => a.localeCompare(b)).map((tag) => <option key={tag} value={tag}>{tag}</option>)}
-                  </select>
-                </label>
-                <label>
-                  Updated on or after
-                  <input type="date" aria-label="Filter by updated date" value={filters.updatedFrom} onChange={(event) => setFilters({ ...filters, updatedFrom: event.target.value })} style={{ width: '100%' }} />
-                </label>
-                {hasActiveFilters(filters) && (
-                  <button type="button" className="btn btn-ghost" onClick={() => setFilters(NO_FILTERS)} style={{ padding: '2px 6px', fontSize: '0.74rem', alignSelf: 'flex-start' }}>
-                    Clear filters
-                  </button>
-                )}
-              </div>
-            )}
+            />
           </div>
+          {showFilters && (
+            <div className="notes-sidebar__filters">
+              <label>
+                Type
+                <select aria-label="Filter by type" value={filters.type} onChange={(event) => setFilters({ ...filters, type: event.target.value })}>
+                  <option value="">Any type</option>
+                  {Array.from(new Set(vaultPages.map((page) => page.type || 'note'))).sort().map((type) => <option key={type} value={type}>{type}</option>)}
+                </select>
+              </label>
+              <label>
+                Tag
+                <select aria-label="Filter by tag" value={filters.tag} onChange={(event) => setFilters({ ...filters, tag: event.target.value })}>
+                  <option value="">Any tag</option>
+                  {Array.from(new Set(vaultPages.flatMap((page) => page.tags || []))).sort((a, b) => a.localeCompare(b)).map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+                </select>
+              </label>
+              <label>
+                Updated on or after
+                <input type="date" aria-label="Filter by updated date" value={filters.updatedFrom} onChange={(event) => setFilters({ ...filters, updatedFrom: event.target.value })} />
+              </label>
+              {hasActiveFilters(filters) && (
+                <button type="button" className="btn btn-ghost" onClick={() => setFilters(NO_FILTERS)} style={{ padding: '2px 6px', fontSize: '0.74rem', alignSelf: 'flex-start' }}>
+                  Clear filters
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="notes-sidebar__list" ref={setListElement}>
@@ -600,13 +572,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
                   {(!allFolders.length || !collapsedFolders.has('__unfiled__')) && (
                     <div className={allFolders.length > 0 ? 'notes-sidebar__folder-contents' : ''}>
-                      {listElement && (
-                        <Virtuoso
-                          customScrollParent={listElement}
-                          totalCount={unfiledPages.length}
-                          itemContent={(index) => renderNoteRow(unfiledPages[index])}
-                        />
-                      )}
+                      {renderNoteList(unfiledPages)}
                     </div>
                   )}
                 </div>

@@ -75,3 +75,13 @@
   .graph-legend { display: none; }
 }
 
+/* Zoom controls sit on the canvas edge instead of in the toolbar */
+.graph-zoom-controls { position: absolute; z-index: 14; left: var(--space-5); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 2px; padding: 4px; background: rgba(255, 255, 255, 0.96); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); box-shadow: var(--shadow-sm); }
+.graph-popover-select { width: 100%; height: 32px; padding: 0 8px; color: var(--text-primary); background: #fff; border: 1px solid var(--border-subtle); border-radius: 6px; font: 600 0.78rem/1 var(--font-sans); text-transform: capitalize; }
+.graph-popover-link { align-self: flex-start; padding: 0; color: var(--tk-primary); background: transparent; border: 0; font: 600 0.74rem/1 var(--font-sans); cursor: pointer; }
+.graph-settings-popover .graph-mode-toggle { width: 100%; }
+.graph-settings-popover .graph-mode-toggle__btn { flex: 1; justify-content: center; }
+.graph-toolbar__primary { flex: 1; }
+@media (max-width: 720px) {
+  .graph-zoom-controls { left: var(--space-2); }
+}
