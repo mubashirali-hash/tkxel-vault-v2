@@ -696,3 +696,18 @@
   .app-vault-switcher { max-width: calc(100vw - 138px); }
   .app-vault-switcher__trigger { padding-inline: var(--space-2); }
 }
+
+/* Template picker beside the Daily Note button: same height and weight as a secondary button */
+.notes-sidebar__template-select {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 var(--space-2);
+  color: var(--text-primary);
+  background: #fff;
+  border: 1px solid var(--border-medium, #cbd5e1);
+  border-radius: var(--radius-sm);
+  font: 600 0.8rem/1 var(--font-sans);
+  cursor: pointer;
+}
+.notes-sidebar__template-select:focus-visible { border-color: var(--border-focus); box-shadow: var(--focus-ring); outline: 0; }

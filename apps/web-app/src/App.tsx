@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Vault, VaultRole, Page, PageType, TimelineEntry, AuditEvent, Share } from '@tkxel-vault/types';
 import { ImportResult } from '@tkxel-vault/vault-core/markdown';
 import { AppShell } from './components/layout/AppShell.js';
@@ -145,6 +145,7 @@ export const App: React.FC = () => {
     resolve: (confirmed: boolean) => void;
   } | null>(null);
   const showNotice = (title: string, message: string) => setNotice({ title, message });
+  const keyNoticeVaultRef = useRef<string | null>(null);
   const requestConfirmation = (request: { title: string; message: string; confirmLabel: string }) =>
     new Promise<boolean>((resolve) => setConfirmation({ ...request, resolve }));
   const settleConfirmation = (confirmed: boolean) => {
@@ -856,7 +857,15 @@ export const App: React.FC = () => {
           console.warn('Conflict: Page was modified concurrently. Local draft preserved in cache.');
           return false;
         } else {
-          console.warn('Failed to save version to DB:', await res.text());
+          const failure = await res.json().catch(() => ({} as any));
+          console.warn('Failed to save version to DB:', failure?.error || res.status);
+          // Tell the user why, once per vault, instead of leaving only "Save failed" in the toolbar
+          if (failure?.error === 'vault_key_unavailable' && keyNoticeVaultRef.current !== currentVault.id) {
+            keyNoticeVaultRef.current = currentVault.id;
+            showNotice('This vault cannot be edited here', failure.message || "This vault's encryption key is not available on this server.");
+          } else if (res.status === 403) {
+            showNotice('Not saved', 'You do not have permission to change this page.');
+          }
           return false;
         }
       } else {

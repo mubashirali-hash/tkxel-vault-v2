@@ -71,6 +71,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCloseNavigation,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
+  // The one scrolling element of the sidebar. Every folder's list is measured against it, so a
+  // folder is as tall as its notes and nothing scrolls inside anything else.
+  const [listElement, setListElement] = useState<HTMLDivElement | null>(null);
   const [filters, setFilters] = useState<SearchFilters>(NO_FILTERS);
   const [showFilters, setShowFilters] = useState(false);
   const [searchResults, setSearchResults] = useState<Page[] | null>(null);
@@ -380,11 +383,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 {draggingPageId ? 'Drop item here to add to folder' : 'No items in this folder.'}
               </div>
             ) : (
-              <Virtuoso
-                style={{ height: `${Math.min(folderNotes.length * 36, 400)}px` }}
-                totalCount={folderNotes.length}
-                itemContent={(index) => renderNoteRow(folderNotes[index])}
-              />
+              listElement && (
+                <Virtuoso
+                  customScrollParent={listElement}
+                  totalCount={folderNotes.length}
+                  itemContent={(index) => renderNoteRow(folderNotes[index])}
+                />
+              )
             )}
           </div>
         )}
@@ -455,9 +460,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     const type = event.target.value;
                     if (type) closeAfter(() => onCreateFromTemplate(type));
                   }}
-                  style={{ flex: 1, minWidth: 0 }}
+                  className="notes-sidebar__template-select"
+                  title="Create a note from a template"
                 >
-                  <option value="">From template…</option>
+                  <option value="">Template…</option>
                   <option value="client">Client</option>
                   <option value="person">Person</option>
                   <option value="project">Project</option>
@@ -520,7 +526,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
 
-        <div className="notes-sidebar__list">
+        <div className="notes-sidebar__list" ref={setListElement}>
           <div className="notes-sidebar__count">
             Vault Items <span>{visiblePages.length}</span>
             {allFolders.length > 0 && <small style={{ marginLeft: 'auto', color: '#475569', fontWeight: 600 }}>{allFolders.length} folders</small>}
@@ -594,11 +600,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
                   {(!allFolders.length || !collapsedFolders.has('__unfiled__')) && (
                     <div className={allFolders.length > 0 ? 'notes-sidebar__folder-contents' : ''}>
-                      <Virtuoso
-                        style={{ height: '300px' }}
-                        totalCount={unfiledPages.length}
-                        itemContent={(index) => renderNoteRow(unfiledPages[index])}
-                      />
+                      {listElement && (
+                        <Virtuoso
+                          customScrollParent={listElement}
+                          totalCount={unfiledPages.length}
+                          itemContent={(index) => renderNoteRow(unfiledPages[index])}
+                        />
+                      )}
                     </div>
                   )}
                 </div>

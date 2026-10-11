@@ -468,6 +468,14 @@ describe('Epic 7: Production-Path SRS Acceptance Criteria Verification (AC-1 to 
       'utf-8'
     );
 
+    // Remove the vaults this run created. They are encrypted under the run's own key service, so no
+    // other process can ever read them, and left behind they appear in the app as vaults that cannot be saved.
+    try {
+      await db.delete(schema.vaults).where(eq(schema.vaults.owner_id, testOwnerId));
+    } catch (cleanupErr) {
+      console.error('Acceptance vault cleanup failed:', cleanupErr?.message);
+    }
+
     if (runnerServer) {
       if (typeof runnerServer.closeAllConnections === 'function') runnerServer.closeAllConnections();
       await new Promise((r) => runnerServer.close(r));

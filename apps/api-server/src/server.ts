@@ -238,6 +238,19 @@ app.use(async (req: Request, res: Response, next) => {
 app.use('/api/ai', aiRouter);
 
 // Helper middleware generator for AuthZ
+/**
+ * True when decryption failed because the vault's data key could not be unwrapped or does not match
+ * the stored ciphertext: the vault was created under a different master key (for example by a test
+ * run or another environment). Nothing about the content is revealed by saying so.
+ */
+function isVaultKeyUnavailable(error: any): boolean {
+  return /unable to authenticate data|Unsupported state|bad decrypt|Invalid key length|unwrap/i.test(String(error?.message || ''));
+}
+const VAULT_KEY_UNAVAILABLE = {
+  error: 'vault_key_unavailable',
+  message: "This vault's encryption key is not available on this server, so its content cannot be read or changed here.",
+};
+
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const requireRole = (allowedRoles: Role[], operation?: VaultOperation) => {
@@ -830,6 +843,10 @@ app.post('/api/vaults/:vaultId/locked-pages/:pageId/publish', requireRole(['owne
   } catch (error: any) {
     if (String(error?.message).includes('No draft to publish')) {
       res.status(400).json({ error: 'There is no draft to publish' });
+      return;
+    }
+    if (isVaultKeyUnavailable(error)) {
+      res.status(503).json(VAULT_KEY_UNAVAILABLE);
       return;
     }
     console.error('Error publishing locked page:', error?.message);
@@ -1951,6 +1968,10 @@ app.post('/api/pages/:id/draft', requireRole(['owner', 'editor'], 'write_open_co
     }
     if (error.status === 409 || error.code === 'CONCURRENT_MODIFICATION') {
       res.status(409).json({ error: error.message });
+      return;
+    }
+    if (isVaultKeyUnavailable(error)) {
+      res.status(503).json(VAULT_KEY_UNAVAILABLE);
       return;
     }
     console.error('Error saving draft:', error);
