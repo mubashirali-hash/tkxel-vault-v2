@@ -126,7 +126,7 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
   activePageId,
   compact = false,
 }) => {
-  const [scope, setScope] = useState<'local' | 'all'>(activePageId && !compact ? 'local' : 'all');
+  const [scope, setScope] = useState<'local' | 'all'>('all');
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [hideOrphans, setHideOrphans] = useState(false);
   const [autoRotate, setAutoRotate] = useState(true);

@@ -48,7 +48,7 @@ function useDismissOnOutsideClick(open: boolean, close: () => void) {
 }
 
 /**
- * Graph controls. The bar holds only what is used constantly: find a note and choose the scope.
+ * Graph controls. The bar holds only what is used constantly: find a note and switch between the 2D and 3D view.
  * Filters and display options open from two buttons, and the zoom controls sit at the edge of
  * the canvas, next to what they act on.
  */
@@ -76,10 +76,28 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = ({
             <Search size={15} aria-hidden="true" />
             <input type="search" aria-label="Find a note in the graph" placeholder="Find a note…" value={searchQuery} onChange={(event) => onSearchChange(event.target.value)} />
           </label>
-          {onScopeChange && (
-            <div className="graph-scope" role="group" aria-label="Graph scope">
-              <button type="button" aria-pressed={scope === 'local'} disabled={!localScopeAvailable} onClick={() => onScopeChange('local')}>Local neighborhood</button>
-              <button type="button" aria-pressed={scope === 'all'} onClick={() => onScopeChange('all')}>Entire vault</button>
+          {onViewModeChange && (
+            <div className="graph-mode-toggle" role="group" aria-label="Visualization mode">
+              <button
+                type="button"
+                className={`graph-mode-toggle__btn ${viewMode === '2d' ? 'active' : ''}`}
+                onClick={() => onViewModeChange('2d')}
+                aria-pressed={viewMode === '2d'}
+                title="Flat network diagram"
+              >
+                <Network size={14} />
+                <span>2D Flat</span>
+              </button>
+              <button
+                type="button"
+                className={`graph-mode-toggle__btn ${viewMode === '3d' ? 'active' : ''}`}
+                onClick={() => onViewModeChange('3d')}
+                aria-pressed={viewMode === '3d'}
+                title="Orbital globe"
+              >
+                <Globe size={14} />
+                <span>3D Globe</span>
+              </button>
             </div>
           )}
           <span className="graph-toolbar__count" aria-live="polite">{resultCount} of {totalCount} notes</span>
@@ -143,30 +161,12 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = ({
             {showSettings && (
               <div className="graph-settings-popover" role="dialog" aria-label="Graph settings">
                 <div className="graph-settings-body">
-                  {onViewModeChange && (
+                  {onScopeChange && (
                     <div className="graph-setting-col">
-                      <span>View</span>
-                      <div className="graph-mode-toggle" role="group" aria-label="Visualization mode">
-                        <button
-                          type="button"
-                          className={`graph-mode-toggle__btn ${viewMode === '2d' ? 'active' : ''}`}
-                          onClick={() => onViewModeChange('2d')}
-                          aria-pressed={viewMode === '2d'}
-                          title="Flat network diagram"
-                        >
-                          <Network size={14} />
-                          <span>2D Flat</span>
-                        </button>
-                        <button
-                          type="button"
-                          className={`graph-mode-toggle__btn ${viewMode === '3d' ? 'active' : ''}`}
-                          onClick={() => onViewModeChange('3d')}
-                          aria-pressed={viewMode === '3d'}
-                          title="Orbital globe"
-                        >
-                          <Globe size={14} />
-                          <span>3D Globe</span>
-                        </button>
+                      <span>Show</span>
+                      <div className="graph-density-options">
+                        <button type="button" className={scope === 'all' ? 'active' : ''} onClick={() => onScopeChange('all')}>Entire vault</button>
+                        <button type="button" className={scope === 'local' ? 'active' : ''} disabled={!localScopeAvailable} onClick={() => onScopeChange('local')} title="Only the open note and the notes linked to it">Local neighborhood</button>
                       </div>
                     </div>
                   )}
