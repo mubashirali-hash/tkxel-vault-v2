@@ -32,7 +32,7 @@ import { Page, PageType, TimelineEntry, VaultRole } from '@tkxel-vault/types';
 import { WikiLinkPicker, formatLinkTarget } from './WikiLinkPicker.js';
 import { DiffViewer } from './DiffViewer.js';
 import { NotesAiDrawer } from '../../features/notes-ai/NotesAiDrawer.js';
-import { ActionMenu, Button, Dialog } from '../ui/index.js';
+import { ActionMenu, Button, Dialog, IconButton } from '../ui/index.js';
 import { NoteInspector } from './NoteInspector.js';
 import { CustomCodeBlock } from './CodeBlockComponent.js';
 import { VaultImage, uploadVaultImage, ACCEPTED_IMAGE_TYPES } from './VaultImage.js';
@@ -659,25 +659,6 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
         <div className="markdown-editor__title-row">
           {/* Folder & Document Title Input */}
           <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, gap: '8px' }}>
-            <span
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '4px',
-                padding: '3px 8px',
-                fontSize: '0.74rem',
-                fontWeight: 650,
-                color: 'var(--tk-primary, #0755e9)',
-                background: '#eff6ff',
-                borderRadius: '4px',
-                border: '1px solid #bfdbfe',
-                whiteSpace: 'nowrap',
-                flexShrink: 0,
-              }}
-              title={folder ? `Folder: ${folder}` : 'Unfiled note'}
-            >
-              📁 {folder || 'Unfiled'}
-            </span>
             <input
               id="markdown-note-title"
               name="markdown-note-title"
@@ -697,7 +678,17 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
 
           {/* Action Buttons */}
           <div className="markdown-editor__actions">
-            <span
+            {/* Save status and the autosave switch are one control */}
+            <button
+              type="button"
+              disabled={!canEdit}
+              onClick={() => {
+                const next = !autoSaveEnabled;
+                setAutoSaveEnabled(next);
+                try {
+                  localStorage.setItem('tkxel_vault_autosave_enabled', String(next));
+                } catch {}
+              }}
               className="markdown-editor__save-state"
               data-state={
                 syncError
@@ -713,9 +704,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
               title={
                 syncError
                   ? 'Save failed — server error or offline'
-                  : lastSavedAt
-                  ? `Last autosaved at ${lastSavedAt.toLocaleTimeString()}`
-                  : undefined
+                  : `${lastSavedAt ? `Last saved at ${lastSavedAt.toLocaleTimeString()} · ` : ''}${autoSaveEnabled ? 'Autosave is on — click to turn it off' : 'Autosave is off — click to turn it on'}`
               }
             >
               {isAutoSaving ? (
@@ -731,62 +720,22 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
                   <Check size={14} /> {!isOnline ? 'Offline — changes stay here' : savedFeedback || !isDirty ? (lastSavedAt ? `Draft saved (${lastSavedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})` : 'Draft saved') : 'Unsaved draft'}
                 </>
               )}
-            </span>
-
-            {canEdit && (
-              <button
-                type="button"
-                onClick={() => {
-                  const next = !autoSaveEnabled;
-                  setAutoSaveEnabled(next);
-                  try {
-                    localStorage.setItem('tkxel_vault_autosave_enabled', String(next));
-                  } catch {}
-                }}
-                className="btn btn-ghost"
-                style={{
-                  padding: '2px 8px',
-                  fontSize: '0.72rem',
-                  fontWeight: 600,
-                  borderRadius: '12px',
-                  border: autoSaveEnabled ? '1px solid #bbf7d0' : '1px solid #e2e8f0',
-                  backgroundColor: autoSaveEnabled ? '#f0fdf4' : '#f8fafc',
-                  color: autoSaveEnabled ? '#166534' : '#64748b',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '5px',
-                  cursor: 'pointer',
-                  height: '28px',
-                }}
-                title={
-                  autoSaveEnabled
-                    ? 'Autosave is enabled: saves drafts automatically after 1.5s of inactivity. Click to toggle.'
-                    : 'Autosave is disabled. Click to enable automatic draft saving.'
-                }
-              >
-                <span
-                  style={{
-                    width: '6px',
-                    height: '6px',
-                    borderRadius: '50%',
-                    backgroundColor: autoSaveEnabled ? '#22c55e' : '#94a3b8',
-                  }}
-                />
-                {autoSaveEnabled ? 'Autosave on' : 'Autosave off'}
-              </button>
-            )}
+              {canEdit && <span className="markdown-editor__autosave" data-on={autoSaveEnabled}>{autoSaveEnabled ? 'Autosave on' : 'Autosave off'}</span>}
+            </button>
 
             {canEdit && (
               <>
-                <button
-                  onClick={() => handleSaveDocument(true, false)}
-                  disabled={!isOnline}
-                  className="btn btn-secondary-white"
-                  style={{ padding: '4px 12px', fontSize: '0.78rem', height: '30px', border: '1px solid var(--tk-primary)', color: 'var(--tk-primary)' }}
-                >
-                  <Save size={14} />
-                  Save Draft
-                </button>
+                {(!autoSaveEnabled || syncError) && (
+                  <button
+                    onClick={() => handleSaveDocument(true, false)}
+                    disabled={!isOnline}
+                    className="btn btn-secondary-white"
+                    style={{ padding: '4px 12px', fontSize: '0.78rem', height: '30px', border: '1px solid var(--tk-primary)', color: 'var(--tk-primary)' }}
+                  >
+                    <Save size={14} />
+                    Save Draft
+                  </button>
+                )}
                 {currentRole === 'owner' && (
                   <button disabled={!isOnline} onClick={() => handleSaveDocument(false, false)} className="btn btn-primary-blue" style={{ padding: '4px 14px', fontSize: '0.78rem', height: '30px' }}>
                     <Check size={14} />
@@ -794,32 +743,26 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
                   </button>
                 )}
                 {isAiEnabled && (
-                  <button
+                  <IconButton
+                    label="AI Co-Pilot"
+                    icon={<Sparkles size={16} color="#0755E9" />}
+                    aria-pressed={isAiDrawerOpen}
                     onClick={() => {
                       setIsAiDrawerOpen((prev) => !prev);
                       setIsInspectorOpen(false);
                     }}
-                    className="btn btn-secondary-white"
-                    style={{
-                      padding: '4px 12px',
-                      fontSize: '0.78rem',
-                      height: '30px',
-                      borderColor: isAiDrawerOpen ? '#0755E9' : '#BFDBFE',
-                      backgroundColor: isAiDrawerOpen ? '#EFF6FF' : '#FFFFFF',
-                      color: '#0755E9',
-                      fontWeight: 600,
-                      gap: '5px',
-                    }}
-                    title="Toggle AI Co-Pilot drawer to discover graph connections, auto-sort, and chat with note"
-                  >
-                    <Sparkles size={14} color="#0755E9" />
-                    AI Co-Pilot
-                  </button>
+                  />
                 )}
                 <ActionMenu
                   label="More note actions"
                   compact
                   items={[
+                    ...(autoSaveEnabled && !syncError ? [{
+                      id: 'save-now',
+                      label: 'Save draft now (Ctrl+S)',
+                      icon: <Save size={15} />,
+                      onSelect: () => { void handleSaveDocument(true, false); },
+                    }] : []),
                     {
                       id: 'autosave',
                       label: autoSaveEnabled ? 'Disable Autosave' : 'Enable Autosave',
@@ -1027,38 +970,8 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
             <Link size={13} />
             <span style={{ fontSize: '0.74rem' }}>[[Link]]</span>
           </button>
-          {isAiEnabled && (
-            <button
-              onClick={handleMagicAutoLink}
-              disabled={isAutoLinking}
-              className="btn btn-ghost"
-              style={{ padding: '4px 6px', color: '#7C3AED', fontWeight: 600, gap: '4px' }}
-              title="Magic Auto-Link: Automatically discover and insert [[wiki-links]] for known concepts"
-            >
-              <Sparkles size={13} className={isAutoLinking ? 'animate-spin' : 'animate-pulse'} />
-              <span style={{ fontSize: '0.74rem' }}>Auto-Link</span>
-            </button>
-          )}
-          <button
-            onClick={() => editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}
-            className="btn btn-ghost"
-            style={{ padding: '4px 6px', color: 'inherit', gap: '4px' }}
-            title="Insert table"
-          >
-            <TableIcon size={13} />
-            <span style={{ fontSize: '0.74rem' }}>Table</span>
-          </button>
           {canEdit && (
             <>
-              <button
-                onClick={() => imageInputRef.current?.click()}
-                className="btn btn-ghost"
-                style={{ padding: '4px 6px', color: 'inherit', gap: '4px' }}
-                title="Insert image (PNG, JPEG, GIF or WebP, up to 5 MB). Stored encrypted in this vault."
-              >
-                <ImageIcon size={13} />
-                <span style={{ fontSize: '0.74rem' }}>Image</span>
-              </button>
               <input
                 ref={imageInputRef}
                 type="file"
@@ -1091,6 +1004,12 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
                 icon: <TableIcon size={15} />,
                 onSelect: () => editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
               },
+              ...(canEdit ? [{
+                id: 'image',
+                label: 'Image',
+                icon: <ImageIcon size={15} />,
+                onSelect: () => imageInputRef.current?.click(),
+              }] : []),
               {
                 id: 'callout',
                 label: 'Callout',
@@ -1113,6 +1032,12 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
                     '\n```mermaid\nflowchart TD\n  A[Start] --> B[Process]\n  B --> C[End]\n```\n'
                   ),
               },
+              ...(isAiEnabled ? [{
+                id: 'auto-link',
+                label: isAutoLinking ? 'Auto-linking…' : 'Auto-link known notes',
+                icon: <Sparkles size={15} />,
+                onSelect: () => { if (!isAutoLinking) void handleMagicAutoLink(); },
+              }] : []),
               {
                 id: 'timeline',
                 label: 'Timeline entry',

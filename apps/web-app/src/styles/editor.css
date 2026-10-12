@@ -503,3 +503,14 @@
 
 /* A [[wiki-link]] whose page does not exist yet (FR-11) */
 .wiki-link--unresolved { color: #B45309; text-decoration: underline dashed #D97706; text-underline-offset: 3px; }
+
+/* Save status doubles as the autosave switch */
+button.markdown-editor__save-state { height: 30px; padding: 0 8px; background: transparent; border: 0; border-radius: var(--radius-sm); font-family: var(--font-sans); cursor: pointer; white-space: nowrap; }
+button.markdown-editor__save-state:hover:not(:disabled) { background: #f1f5f9; }
+button.markdown-editor__save-state:disabled { cursor: default; }
+.markdown-editor__autosave { padding-left: 8px; margin-left: 3px; border-left: 1px solid var(--border-subtle); color: var(--text-muted); font-weight: 500; }
+.markdown-editor__autosave[data-on='false'] { color: #b45309; font-weight: 600; }
+
+/* The toolbar wraps instead of scrolling, so the Insert menu is never clipped */
+.markdown-editor__toolbar { position: relative; z-index: 5; overflow: visible; }
+.markdown-editor__toolbar-group { flex-wrap: wrap; }
