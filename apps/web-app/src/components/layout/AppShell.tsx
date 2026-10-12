@@ -294,9 +294,12 @@ export const AppShell: React.FC<AppShellProps> = ({
               <Network size={16} /><span>Graph</span>
             </button>
           )}
-          <button type="button" className="app-view-tab" aria-current={currentTab === 'audit' ? 'page' : undefined} onClick={() => selectTab('audit')}>
-            <History size={16} /><span>Activity &amp; Audit</span>
-          </button>
+          {/* The audit trail is the Owner's; others would only see an empty list */}
+          {currentRole === 'owner' && (
+            <button type="button" className="app-view-tab" aria-current={currentTab === 'audit' ? 'page' : undefined} onClick={() => selectTab('audit')}>
+              <History size={16} /><span>Activity &amp; Audit</span>
+            </button>
+          )}
         </nav>
 
         <div className="app-header__actions">
@@ -382,9 +385,11 @@ export const AppShell: React.FC<AppShellProps> = ({
             <Network size={20} /><span>Graph</span>
           </button>
         )}
-        <button type="button" aria-current={currentTab === 'audit' ? 'page' : undefined} onClick={() => selectTab('audit')}>
-          <History size={20} /><span>Activity</span>
-        </button>
+        {currentRole === 'owner' && (
+          <button type="button" aria-current={currentTab === 'audit' ? 'page' : undefined} onClick={() => selectTab('audit')}>
+            <History size={20} /><span>Activity</span>
+          </button>
+        )}
         {navigationAvailable && (
           <button type="button" aria-expanded={navigationOpen} onClick={onToggleNavigation}>
             <Menu size={20} /><span>Browse</span>

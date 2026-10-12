@@ -253,6 +253,8 @@ export const App: React.FC = () => {
   // Open Vault Pages & Links State (Persisted)
   const [pages, setPages] = useState<Page[]>(SEED_PAGES);
   const [activePageId, setActivePageId] = useState<string>('');
+  // Local development sign-in as a test user (the field only renders when the dev sign-in is enabled)
+  const [devTestUser, setDevTestUser] = useState('');
   const [links, setLinks] = useState<Array<{ from_page_id: string; to_page_id: string }>>(SEED_LINKS);
   const [lockedSkills, setLockedSkills] = useState<SkillItem[]>(SEED_SKILLS);
   const [timelineEntries, setTimelineEntries] = useState<TimelineEntry[]>(SEED_TIMELINE);
@@ -1391,6 +1393,31 @@ export const App: React.FC = () => {
             >
               Continue as Workspace Administrator (Local Dev)
             </button>
+
+            {/* Local development only: sign in as any test address to see the app as a Reader or Editor */}
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                const email = devTestUser.trim().toLowerCase();
+                if (!/^[^\s@]+@[^\s@]+$/.test(email)) return;
+                setSsoToken(`test_user:${email}`);
+                setAuthToken(`test_user:${email}`);
+                setUserInfo({ email, name: `${email} (Local test user)` });
+              }}
+              style={{ display: 'flex', gap: '8px', marginTop: '10px' }}
+            >
+              <input
+                type="email"
+                aria-label="Local test user email"
+                placeholder="or a test user, e.g. reader@test.com"
+                value={devTestUser}
+                onChange={(event) => setDevTestUser(event.target.value)}
+                style={{ flex: 1, minWidth: 0, height: '36px', padding: '0 10px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem' }}
+              />
+              <button type="submit" className="btn btn-secondary-white" style={{ height: '36px', padding: '0 12px', fontSize: '0.8rem' }}>
+                Continue
+              </button>
+            </form>
             </>)}
           </div>
         </div>
@@ -1641,7 +1668,7 @@ export const App: React.FC = () => {
               setActivePageId(pageId);
               setCurrentTab('editor');
             }}
-            onLinkPages={handleLinkPages}
+            onLinkPages={currentRole === 'owner' || currentRole === 'editor' ? handleLinkPages : undefined}
           />
         </Suspense>
       )}

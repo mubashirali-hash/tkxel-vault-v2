@@ -691,7 +691,9 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
               }}
               className="markdown-editor__save-state"
               data-state={
-                syncError
+                !canEdit
+                  ? 'readonly'
+                  : syncError
                   ? 'error'
                   : !isOnline
                   ? 'offline'
@@ -702,12 +704,18 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
                   : 'draft'
               }
               title={
-                syncError
+                !canEdit
+                  ? 'You can read this note but not change it'
+                  : syncError
                   ? 'Save failed — server error or offline'
                   : `${lastSavedAt ? `Last saved at ${lastSavedAt.toLocaleTimeString()} · ` : ''}${autoSaveEnabled ? 'Autosave is on — click to turn it off' : 'Autosave is off — click to turn it on'}`
               }
             >
-              {isAutoSaving ? (
+              {!canEdit ? (
+                <>
+                  <Eye size={14} /> Read only
+                </>
+              ) : isAutoSaving ? (
                 <>
                   <Clock size={14} className="spin-animate" /> Saving...
                 </>
@@ -843,8 +851,8 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
       <div className="markdown-editor__workspace">
         {/* Editor Main Surface */}
         <div className="markdown-editor__main">
-          {/* Formatting Toolbar: Live WYSIWYG Actions */}
-          <div className="markdown-editor__toolbar">
+          {/* Formatting Toolbar: Live WYSIWYG Actions (only for people who can edit) */}
+          <div className="markdown-editor__toolbar" hidden={!canEdit}>
             {/* Formatting Buttons */}
             <div className="markdown-editor__toolbar-group">
           <button

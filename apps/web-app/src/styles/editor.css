@@ -514,3 +514,6 @@ button.markdown-editor__save-state:disabled { cursor: default; }
 /* The toolbar wraps instead of scrolling, so the Insert menu is never clipped */
 .markdown-editor__toolbar { position: relative; z-index: 5; overflow: visible; }
 .markdown-editor__toolbar-group { flex-wrap: wrap; }
+
+/* Readers see no formatting bar */
+.markdown-editor__toolbar[hidden] { display: none; }

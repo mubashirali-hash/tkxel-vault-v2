@@ -563,3 +563,30 @@ This is the project's own adversarial testing. It is recorded separately from 15
 
 **15.46 stays open.** Everything that can be tested from inside the project has been; the remaining action is to commission an outside firm, which only the project owner can do.
 
+
+### Browser click-through and first real-protocol client check (2026-10-11 to 2026-10-12)
+
+The web suite mostly checks source text, so these defects passed it and were found only by using the app in a browser. Each has a fix and, where behaviour can be asserted, a test.
+
+- [x] **15.63** A saved draft did not come back when a note was reopened: once a page had a published version, the page endpoints returned the published text to everyone, so an Owner's or Editor's autosaved work looked lost. Owners and Editors now receive a draft saved after the current version, with `has_unpublished_draft`; Readers still receive only published content (`vault-core/versions/index.ts`, `api-server/server.ts`). Test: `publish-draft-visibility-http.test.js`. Browser-checked, including after a key rotation.
+- [x] **15.64** "Save failed" with no reason on a vault whose key cannot be unwrapped (left behind by an acceptance run under a throwaway key). The server now answers `vault_key_unavailable` and the app says the vault cannot be edited here; the acceptance script deletes its vaults when it ends. The message itself has not been seen in a browser since the unreadable vaults were removed.
+- [x] **15.65** Sidebar: the open note's row was hidden by a stray style rule, folder lists were clipped by fixed-height boxes, and the create menu opened outside the sidebar. All three fixed (`Sidebar.tsx`, `shell.css`).
+- [x] **15.66** Editor: the Insert menu was clipped to its first item. Fixed; Table, Image and Auto-Link moved into it; the save status and the autosave switch became one control.
+- [x] **15.67** Import gave every Markdown file without a declared type the type `agent`. It is now `note` (`vault-core/markdown/importer.ts`, test in `markdown-importer.test.js`).
+- [x] **15.68** Import stored only the links the client sent, so an import that sent none produced a graph with no connections. The server now derives each imported page's links from its text once the whole batch exists, as it does on save (`api-server/server.ts`). Test: `publish-draft-visibility-http.test.js` (FR-10 import case).
+- [x] **15.69** The add-skill form could not be saved with its own defaults (its parameter example was in a shape the server refuses) and always showed a false "no active KMS data key" warning because the dialog was never given the current vault. Both fixed (`AddSkillModal.tsx`, `App.tsx`). Browser-checked: a skill saved in a new locked vault.
+- [x] **15.70** A destroyed (crypto-shredded) vault kept its access: it stayed in the web vault list and was offered through MCP `list_vaults`. `getUserAccessibleVaults` now leaves shredded vaults out for everyone, and the vault list does too; the sealed record and its audit events remain. Tests: `vault-rekey-shred.test.js`, `publish-draft-visibility-http.test.js`.
+- [x] **15.71** After destroying a vault the settings dialog stayed open and showed the next vault's destroy form. It now closes with a confirmation.
+- [x] **15.72** Vault switcher: the control labelled "Open vault X" changed a locked vault to open. It now says what it does, as does its confirmation.
+- [x] **15.73** Activity & Audit: the list was squeezed to a few rows by its flex container, rows repeated raw identifiers, and the filter bar broke on narrow screens. Fixed (`AuditViewer.tsx`, `audit.css`).
+- [x] **15.74** Protected skills screen showed three status cards with fixed text ("Streamable HTTP Active" and so on) that did not reflect any real state. Removed.
+- [x] **15.75** Reader view showed controls that do nothing for a Reader: the formatting bar, a "Draft saved" status, the Activity & Audit tab (the trail is Owner-only) and "Connect notes" in the graph. Readers now see "Read only" and none of those controls; the audit tab shows only to Owners.
+- [x] **15.76** Graph: large graphs were covered in labels because every note with three or more connections counted as a hub. Hub labels are capped at the 40 most connected notes (`utils/graph-hubs.ts`, `test/graph-hubs.test.js`). The graph opens on the entire vault; the local view moved under settings.
+
+**Checked in a browser on throwaway vaults (since destroyed):** paste-import, typed-link insertion, saving rate limits, sharing and revoking, key rotation with notes and with a skill, adding a skill, destroying a vault, a 700-note / 1,400-link graph (longest main-thread task 58 ms in one run on this laptop).
+
+**Reader and Editor in a browser.** The login screen has a development-only field to continue as any test address (the server already accepted `test_user:` tokens when the dev bypass is on; neither exists in a production build). As a Reader: read-only, no create or edit controls. As an Editor: can edit and autosave a draft, has no Publish button, and is refused by the server on publish. The Editor's draft was not returned to the Reader. A signed-in outsider was refused.
+
+**MCP over the real protocol.** A minimal JSON-RPC client drove `services/mcp-gateway/dist/stdio.js` as a real user: `initialize` answered protocol 2025-11-25, `tools/list` returned nine tools, `list_vaults`, `search`, `get_page` and `get_context` returned the expected content and backlinks from a three-note vault, and requests for a vault the user cannot reach answered `not_allowed`. This is a protocol check by the project's own client, not a Claude client: the Claude Code CLI on the machine was not signed in, and Claude Desktop needs a restart to load the server that was added to its configuration.
+
+**Still not checked in a browser:** the emergency-access request form (it shows only to an administrator who is not the vault's Owner), the graph at the 2,000-note target, and the unreadable-vault message.

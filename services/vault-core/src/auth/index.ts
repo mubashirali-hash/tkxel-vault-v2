@@ -1,6 +1,7 @@
 import { eq, and, isNull, sql, inArray, gt } from 'drizzle-orm';
 import { db } from '../db.js';
 import { vaults, shares, userGroups, breakGlassRequests } from '../schema/index.js';
+import { isVaultShredded } from '../vault/rekey.js';
 
 export type Role = 'owner' | 'editor' | 'reader' | 'consumer';
 export type VaultMode = 'open' | 'locked';
@@ -196,8 +197,9 @@ export async function getUserAccessibleVaults(userId: string): Promise<UserVault
 
   const isGlobalOwner = configuredOwners.includes(normalizedUser);
 
-  // Fetch all vaults
-  const allVaults = await db.select().from(vaults);
+  // Every vault that still exists. A destroyed (crypto-shredded) vault keeps a sealed record for the
+  // audit trail, but nobody has access to it any more: not in the web app and not through MCP.
+  const allVaults = (await db.select().from(vaults)).filter((v) => !isVaultShredded(v.data_key_id));
 
   // Administrators own every open vault. A locked vault they do not own is resolved below like anyone
   // else's, plus any active break-glass grant (NFR-06).

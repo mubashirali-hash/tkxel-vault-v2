@@ -9,6 +9,7 @@ import { saveDraft, publishVersion, getPageContent } from '../dist/versions/inde
 import { appendTimelineEntry, listTimelineEntries } from '../dist/vault/timeline.js';
 import { rekeyVault, cryptoShredVault, isVaultShredded } from '../dist/vault/rekey.js';
 import { runMigrations } from '../dist/schema/migrator.js';
+import { getUserAccessibleVaults } from '../dist/auth/index.js';
 
 test('NFR-05: on-demand re-keying and crypto-shredding', async (t) => {
   const originalNodeEnv = process.env.NODE_ENV;
@@ -137,6 +138,7 @@ test('NFR-05: on-demand re-keying and crypto-shredding', async (t) => {
       assert.equal(isVaultShredded(untouched.vault.data_key_id), false);
       assert.ok(untouched.versions.length > 0);
 
+      assert.ok((await getUserAccessibleVaults(owner)).some((access) => access.vaultId === vaultId), 'the Owner has access until the vault is destroyed');
       const result = await cryptoShredVault({ vaultId, actorId: owner, confirmName: 'Rekey Vault' });
       assert.equal(result.pagesRemoved, 1);
       assert.equal(result.skillsRemoved, 1);
@@ -151,6 +153,9 @@ test('NFR-05: on-demand re-keying and crypto-shredding', async (t) => {
       assert.equal(after.timeline.length, 0);
       assert.equal(after.skill, undefined);
       await assert.rejects(() => kms.unwrapKey(after.vault.data_key_id), 'the tombstone is not a usable key');
+
+      // Nobody keeps access to a destroyed vault, so it is offered neither in the web app nor through MCP
+      assert.ok(!(await getUserAccessibleVaults(owner)).some((access) => access.vaultId === vaultId));
 
       await assert.rejects(() => rekeyVault({ vaultId, actorId: owner }), /crypto-shredded/);
       await assert.rejects(() => cryptoShredVault({ vaultId, actorId: owner, confirmName: 'Rekey Vault' }), /already/);
