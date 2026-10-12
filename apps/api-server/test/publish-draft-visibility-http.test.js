@@ -204,6 +204,34 @@ test('FR-41 / FR-43: owner-only publish and draft confidentiality over HTTP', as
       const readerView = await apiRequest('GET', `/api/pages/${importedPageId}`, reader);
       assert.equal(readerView.status, 404);
     });
+    await t.test('FR-10: an import builds the link graph on the server, whatever links the client sends', async () => {
+      const firstId = crypto.randomUUID();
+      const secondId = crypto.randomUUID();
+      pageIds.push(firstId, secondId);
+
+      const res = await apiRequest('POST', `/api/vaults/${vaultId}/import`, owner, {
+        pages: [
+          { id: firstId, title: 'Import Link First', content: 'Points at [[Import Link Second]] and [[Import Missing Page]].' },
+          { id: secondId, title: 'Import Link Second', content: 'Points back with [[depends_on::Import Link First]].' },
+        ],
+        // A client that sends no links, or wrong ones, does not decide the graph
+        links: [{ from_page_id: firstId, to_page_id: secondId, raw_target: 'Not In The Text', link_type: 'wiki' }],
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.data.count, 2);
+
+      const fromFirst = await db.select().from(schema.links).where(eq(schema.links.from_page_id, firstId));
+      assert.deepEqual(fromFirst.map((l) => l.raw_target).sort(), ['Import Link Second', 'Import Missing Page']);
+      const resolved = fromFirst.find((l) => l.raw_target === 'Import Link Second');
+      assert.equal(resolved.to_page_id, secondId, 'a link to a page later in the same batch is resolved');
+      assert.equal(fromFirst.find((l) => l.raw_target === 'Import Missing Page').resolved, false);
+
+      const fromSecond = await db.select().from(schema.links).where(eq(schema.links.from_page_id, secondId));
+      assert.equal(fromSecond.length, 1);
+      assert.equal(fromSecond[0].to_page_id, firstId);
+      assert.equal(fromSecond[0].link_type, 'depends_on');
+    });
+
     await t.test('FR-10: saving a page persists its outgoing links and resolves ghost links', async () => {
       const sourceId = crypto.randomUUID();
       const targetId = crypto.randomUUID();
@@ -978,9 +1006,13 @@ test('FR-41 / FR-43: owner-only publish and draft confidentiality over HTTP', as
         assert.equal((await apiRequest('POST', `/api/vaults/${keyVaultId}/crypto-shred`, owner, { confirm_name: 'nope' })).status, 400);
         assert.equal((await apiRequest('GET', `/api/pages/${keyPageId}`, owner)).status, 200, 'a failed confirmation changes nothing');
 
+        const listedBefore = await apiRequest('GET', '/api/vaults', owner);
+        assert.ok(listedBefore.data.vaults.some((v) => v.id === keyVaultId), 'the vault is listed until it is destroyed');
         const shred = await apiRequest('POST', `/api/vaults/${keyVaultId}/crypto-shred`, owner, { confirm_name: 'Key Lifecycle Vault' });
         assert.equal(shred.status, 200);
         assert.equal(shred.data.pages_removed, 1);
+        const listedAfter = await apiRequest('GET', '/api/vaults', owner);
+        assert.ok(!listedAfter.data.vaults.some((v) => v.id === keyVaultId), 'a destroyed vault is no longer listed');
         assert.equal((await db.select().from(schema.versions).where(eq(schema.versions.page_id, keyPageId))).length, 0);
         const sealed = (await db.select().from(schema.vaults).where(eq(schema.vaults.id, keyVaultId)))[0];
         assert.ok(sealed.data_key_id.startsWith('shredded:'));

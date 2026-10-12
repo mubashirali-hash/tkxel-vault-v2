@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react'
 import * as d3 from 'd3';
 import { Page } from '@tkxel-vault/types';
 import { GraphToolbar } from './GraphToolbar.js';
+import { pickHubIds } from '../../utils/graph-hubs.js';
 import { Link2, ExternalLink, Copy, Check, X, Search, Share2 } from 'lucide-react';
 import { GraphInspector } from './GraphInspector.js';
 
@@ -366,6 +367,9 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
       degreeById.set(targetId, (degreeById.get(targetId) || 0) + 1);
     });
 
+    // Notes labelled in the "hubs" setting: the well-connected ones, capped so a large graph stays readable
+    const hubIds = pickHubIds(nodes.map((node) => node.id), degreeById);
+
     // 2D Hit Testing
     const findNodeAt2D = (gx: number, gy: number, radius = 20): GraphNode | null => {
       for (let i = nodes.length - 1; i >= 0; i--) {
@@ -666,7 +670,7 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
         ctx.globalAlpha = 1;
 
         // Smart Label Visibility (LOD)
-        const isHub = nodeDegree >= 3;
+        const isHub = hubIds.has(node.id);
         const shouldShowLabel =
           isSelected ||
           isHovered ||
@@ -951,8 +955,7 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
         // 7. Label Occlusion Culling:
         // LABELS ON THE BACK ARE COMPLETELY HIDDEN so the front view is NEVER disturbed!
         const isFrontFacing = node.normZ > 0.05;
-        const nodeDegree = degreeById.get(node.id) || 0;
-        const isHub = nodeDegree >= 3;
+        const isHub = hubIds.has(node.id);
 
         const shouldShowLabel =
           isFrontFacing &&

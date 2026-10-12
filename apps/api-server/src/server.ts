@@ -23,7 +23,7 @@ import {
 } from '@tkxel-vault/vault-core/auth';
 import { saveDraft, publishVersion, getPageContent } from '@tkxel-vault/vault-core/versions';
 import { createKmsProvider, EnvelopeEncryption } from '@tkxel-vault/vault-core/crypto';
-import { movePage, createVault, VaultValidationError, runMigrations, MarkdownChunker, renamePage, PageTitleConflictError, appendTimelineEntry, listTimelineEntries, listPageVersions, rollbackPageToVersion, unpublishPage, getUserAccessibleVaults, exportVaultArchive, ExportNotAllowedError, changeVaultMode, rekeyVault, cryptoShredVault, reindexVault, EmbeddingConfigurationError, createOidcVerifierFromEnv, recordUserGroups, normalizeSharePrincipal, resolveCrossVaultLinks, storeVaultAsset, readVaultAsset, getAssetVaultId, MAX_ASSET_BYTES, getVaultRateLimits, setVaultRateLimits, requestBreakGlass, decideBreakGlass, revokeBreakGlass, listBreakGlassRequests, getConfiguredGlobalOwners, recordAccessDenial } from '@tkxel-vault/vault-core';
+import { movePage, createVault, VaultValidationError, runMigrations, MarkdownChunker, renamePage, PageTitleConflictError, appendTimelineEntry, listTimelineEntries, listPageVersions, rollbackPageToVersion, unpublishPage, getUserAccessibleVaults, exportVaultArchive, ExportNotAllowedError, changeVaultMode, rekeyVault, cryptoShredVault, reindexVault, EmbeddingConfigurationError, createOidcVerifierFromEnv, recordUserGroups, normalizeSharePrincipal, resolveCrossVaultLinks, storeVaultAsset, readVaultAsset, getAssetVaultId, MAX_ASSET_BYTES, getVaultRateLimits, setVaultRateLimits, requestBreakGlass, decideBreakGlass, revokeBreakGlass, listBreakGlassRequests, getConfiguredGlobalOwners, recordAccessDenial, isVaultShredded, LinkGraphIndexer } from '@tkxel-vault/vault-core';
 import crypto from 'node:crypto';
 import { aiRouter } from './routes/ai.js';
 import { isDevAuthBypassEnabled, getSsoAudience } from './auth/dev-bypass.js';
@@ -360,6 +360,8 @@ app.get('/api/vaults', async (req: Request, res: Response) => {
     const isDevAdmin = Boolean((req as any).isDevAdmin);
 
     const accessibleVaults = allVaults
+      // A destroyed vault keeps a sealed record for the audit trail but is no longer a place to work
+      .filter((v) => !isVaultShredded(v.data_key_id))
       .filter((v) => isDevAdmin || access.has(v.id))
       .map((v) => ({
         id: v.id,
@@ -1662,6 +1664,7 @@ app.post('/api/vaults/:vaultId/import', requireRole(['owner', 'editor'], 'write_
     // Only Owners may publish (FR-41): content imported by an Editor lands as a draft
     const importStatus: 'published' | 'draft' = (req as any).userRole === 'owner' ? 'published' : 'draft';
     let importedCount = 0;
+    const importedContent: Array<{ id: string; content: string }> = [];
 
     await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT set_config('app.current_user_id', ${userId}, true)`);
@@ -1694,6 +1697,7 @@ app.post('/api/vaults/:vaultId/import', requireRole(['owner', 'editor'], 'write_
               continue;
             }
             importedCount++;
+            importedContent.push({ id: pageId, content: rawContent });
 
             // Scrub body from front_matter before database insertion
             const cleanFrontMatter = { ...(p.front_matter || {}) };
@@ -1793,6 +1797,15 @@ app.post('/api/vaults/:vaultId/import', requireRole(['owner', 'editor'], 'write_
               .onConflictDoNothing();
           }
         }
+      }
+
+      // The link graph is derived on the server from the imported text, once every page of the batch
+      // exists, so it never depends on what the client chose to send (same rule as saving a page, FR-10)
+      for (const imported of importedContent) {
+        await LinkGraphIndexer.updateLinksForPage(vaultId, imported.id, imported.content, tx);
+      }
+      for (const imported of importedContent) {
+        await LinkGraphIndexer.resolveIncomingGhostLinks(imported.id, tx);
       }
 
       await tx.insert(schema.auditEvents).values({
