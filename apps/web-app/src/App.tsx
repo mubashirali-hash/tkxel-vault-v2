@@ -34,7 +34,7 @@ import {
   processImportPages,
   triggerBlobDownload,
 } from './operations/index.js';
-import { Lock, Sparkles, Plus, Copy, Check, Terminal, ShieldCheck, FileText, Trash2 } from 'lucide-react';
+import { Lock, Sparkles, Plus, Copy, Check, ShieldCheck, FileText, Trash2 } from 'lucide-react';
 import { GoogleOAuthProvider, GoogleLogin, CredentialResponse } from '@react-oauth/google';
 import { jwtDecode } from 'jwt-decode';
 
@@ -1079,11 +1079,11 @@ export const App: React.FC = () => {
   const handleChangeVaultMode = async (vault: Vault) => {
     const nextMode = vault.mode === 'open' ? 'locked' : 'open';
     const confirmed = await requestConfirmation({
-      title: nextMode === 'locked' ? `Lock "${vault.name}"?` : `Open "${vault.name}"?`,
+      title: nextMode === 'locked' ? `Change "${vault.name}" to a locked vault?` : `Change "${vault.name}" to an open vault?`,
       message: nextMode === 'locked'
         ? 'Its content becomes use-only: no reading, search, graph or export. Reader access is revoked.'
         : 'Its content becomes readable and searchable by Readers you share it with. Consumer access is revoked.',
-      confirmLabel: nextMode === 'locked' ? 'Lock vault' : 'Open vault',
+      confirmLabel: nextMode === 'locked' ? 'Change to locked' : 'Change to open',
     });
     if (!confirmed) return;
     try {
@@ -1714,36 +1714,6 @@ export const App: React.FC = () => {
                 <span>Add protected skill</span>
               </button>
             )}
-          </div>
-
-          {/* Runtime Isolation Telemetry */}
-          <div className="protected-health" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
-            <div className="clean-panel" style={{ padding: '16px', backgroundColor: '#FFFFFF', border: '1px solid var(--border-subtle)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--tk-primary)', marginBottom: '6px' }}>
-                <Terminal size={16} />
-                <span style={{ fontSize: '0.78rem', fontWeight: 700 }}>MCP GATEWAY STATUS</span>
-              </div>
-              <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-primary)' }}>Streamable HTTP Active</div>
-              <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '4px' }}>Anthropic Spec 2025-11-25</div>
-            </div>
-
-            <div className="clean-panel" style={{ padding: '16px', backgroundColor: '#FFFFFF', border: '1px solid var(--border-subtle)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--tk-success)', marginBottom: '6px' }}>
-                <ShieldCheck size={16} />
-                <span style={{ fontSize: '0.78rem', fontWeight: 700 }}>ENCRYPTION INVARIANT</span>
-              </div>
-              <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-primary)' }}>AES-256-GCM Sealed</div>
-              <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '4px' }}>Zero Raw Disk Exfiltration</div>
-            </div>
-
-            <div className="clean-panel" style={{ padding: '16px', backgroundColor: '#FFFFFF', border: '1px solid var(--border-subtle)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--locked-accent)', marginBottom: '6px' }}>
-                <Sparkles size={16} />
-                <span style={{ fontSize: '0.78rem', fontWeight: 700 }}>REGISTERED SKILLS</span>
-              </div>
-              <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-primary)' }}>{lockedSkills.length} Operational</div>
-              <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '4px' }}>In-Memory Sandbox Runner</div>
-            </div>
           </div>
 
           {/* Registered Skills Grid */}

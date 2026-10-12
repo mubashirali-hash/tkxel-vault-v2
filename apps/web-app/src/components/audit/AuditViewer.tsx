@@ -14,7 +14,7 @@ const PAGE_SIZE = 25;
 const actionLabels: Record<string, string> = {
   create_vault: 'Created a vault', edit_vault: 'Updated vault settings', delete_vault: 'Deleted a vault', mode_change: 'Changed vault protection',
   share_vault: 'Shared vault access', revoke_vault: 'Revoked vault access', export_open_vault: 'Exported open vault', export_locked_denied: 'Blocked locked-vault export',
-  create_page: 'Created a note', edit_page: 'Edited a note', publish_page: 'Published a note', publish_version: 'Published a version', save_draft: 'Saved a draft', unpublish_page: 'Returned a note to draft', delete_page: 'Deleted a note',
+  create_page: 'Created a note', edit_page: 'Edited a note', publish_page: 'Published a note', publish_version: 'Published a version', save_draft: 'Saved a draft', unpublish_page: 'Returned a note to draft', delete_page: 'Deleted a note', move_page: 'Moved a note to another vault', reindex_vault: 'Rebuilt the search index', export_audit_log: 'Exported the audit log', import_pages: 'Imported notes', skill_scan_rejected: 'Rejected an unsafe skill upload', view_locked_page: 'Viewed a reference page',
   upload_skill: 'Added a protected skill', publish_skill: 'Published a protected skill', delete_skill: 'Deleted a protected skill', tool_call: 'Used an integration tool',
   tool_denied: 'Blocked a tool request', security_alert: 'Raised a security alert',
 };
@@ -39,10 +39,18 @@ function relativeTime(timestamp: Date | string): string {
   return formatter.format(Math.round(hours / 24), 'day');
 }
 
+const IDENTIFIER_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * One line of readable context for a row. Identifiers and the title (shown separately as the
+ * resource) are left out here; the exact metadata is always available in the details drawer.
+ */
 function summarizeMetadata(metadata: Record<string, unknown>): string {
-  const entries = Object.entries(metadata);
-  if (!entries.length) return 'No additional details';
-  return entries.slice(0, 2).map(([key, value]) => `${key.replace(/_/g, ' ')}: ${String(value)}`).join(' · ');
+  return Object.entries(metadata)
+    .filter(([key, value]) => key !== 'title' && key !== 'skill_name' && !/(^|_)id$/.test(key) && value !== null && typeof value !== 'object' && !IDENTIFIER_SHAPE.test(String(value)))
+    .slice(0, 2)
+    .map(([key, value]) => `${key.replace(/_/g, ' ')}: ${String(value)}`)
+    .join(' · ');
 }
 
 function resolvedTargetName(event: AuditEvent, knownNames: Record<string, string>): string {
@@ -107,8 +115,8 @@ export const AuditViewer: React.FC<AuditViewerProps> = ({ events, onExportCsv, k
             return (
               <button type="button" className="audit-row" data-outcome={outcome} key={event.id} onClick={() => setSelectedEvent(event)}>
                 <span className="audit-row__icon" aria-hidden="true">{outcome === 'attention' ? <AlertTriangle size={17} /> : <CheckCircle2 size={17} />}</span>
-                <span className="audit-row__main"><strong>{describeAuditAction(event.action)}</strong><small>{knownNames[event.actor_id] || event.actor_id} · {summarizeMetadata(event.metadata)}</small></span>
-                <span className="audit-row__target">{resolvedTargetName(event, knownNames)}</span>
+                <span className="audit-row__main"><strong>{describeAuditAction(event.action)}</strong><small>{[knownNames[event.actor_id] || event.actor_id, summarizeMetadata(event.metadata)].filter(Boolean).join(' · ')}</small></span>
+                <span className="audit-row__target">{IDENTIFIER_SHAPE.test(resolvedTargetName(event, knownNames)) ? '' : resolvedTargetName(event, knownNames)}</span>
                 <time dateTime={exactTime} title={exactTime}>{relativeTime(event.timestamp)}</time>
               </button>
             );

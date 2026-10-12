@@ -228,8 +228,8 @@ export const AppShell: React.FC<AppShellProps> = ({
                             <button
                               type="button"
                               className="app-vault-menu__delete-btn"
-                              title={vault.mode === 'open' ? `Lock vault "${vault.name}"` : `Open vault "${vault.name}"`}
-                              aria-label={vault.mode === 'open' ? `Lock vault ${vault.name}` : `Open vault ${vault.name}`}
+                              title={vault.mode === 'open' ? `Change "${vault.name}" to a locked vault` : `Change "${vault.name}" to an open vault`}
+                              aria-label={vault.mode === 'open' ? `Change ${vault.name} to a locked vault` : `Change ${vault.name} to an open vault`}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setVaultDropdownOpen(false);
@@ -300,7 +300,8 @@ export const AppShell: React.FC<AppShellProps> = ({
         </nav>
 
         <div className="app-header__actions">
-          <button
+          {/* Shown only while AI is on; turning it on lives in the workspace menu */}
+          {isAiEnabled && <button
             type="button"
             className={`app-ai-pill ${isAiEnabled ? 'app-ai-pill--enabled' : 'app-ai-pill--disabled'}`}
             onClick={handleToggleAi}
@@ -322,7 +323,7 @@ export const AppShell: React.FC<AppShellProps> = ({
           >
             <Sparkles size={13} />
             <span>{isAiEnabled ? 'AI Active' : 'AI Off'}</span>
-          </button>
+          </button>}
 
           {overflowItems.length > 0 && <ActionMenu label="Workspace actions" items={overflowItems} compact />}
 

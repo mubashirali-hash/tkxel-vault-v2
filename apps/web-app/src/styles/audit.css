@@ -40,11 +40,13 @@
 
 @media (max-width: 700px) {
   .audit-viewer { padding: var(--space-4) var(--space-3) calc(var(--app-mobile-nav-height) + var(--space-5)); }
-  .audit-filters { display: flex; overflow-x: auto; }
-  .audit-search { min-width: 260px; }
-  .audit-filters > label:not(.audit-search) { min-width: 140px; }
+  .audit-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .audit-search { grid-column: 1 / -1; }
   .audit-summary span { display: none; }
   .audit-row { grid-template-columns: 34px minmax(0, 1fr) 82px; gap: var(--space-2); padding: var(--space-3); }
   .audit-row__target { display: none; }
   .audit-row time { font-size: .68rem; }
 }
+
+/* Sections keep their natural height; the page scrolls instead of squeezing the list */
+.audit-viewer > * { flex-shrink: 0; }
