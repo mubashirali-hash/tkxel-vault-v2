@@ -165,6 +165,17 @@ test('FR-41 / FR-43: owner-only publish and draft confidentiality over HTTP', as
 
       const editorList = await apiRequest('GET', `/api/vaults/${vaultId}/pages`, editor);
       assert.ok(editorList.data.pages.some((p) => p.id === draftOnlyPageId), 'Editor still sees unpublished pages');
+
+      // People who can edit get their saved draft back when they reopen the page; the published
+      // version stays the current one until an Owner publishes
+      const editorListed = editorList.data.pages.find((p) => p.id === publishedPageId);
+      assert.equal(editorListed.content, 'UNPUBLISHED-DRAFT-V2');
+      assert.equal(editorListed.has_unpublished_draft, true);
+      const editorSingle = await apiRequest('GET', `/api/pages/${publishedPageId}`, editor);
+      assert.equal(editorSingle.data.page.content, 'UNPUBLISHED-DRAFT-V2');
+      assert.equal(editorSingle.data.page.has_unpublished_draft, true);
+      assert.equal(editorSingle.data.page.current_version_id, editorListed.current_version_id);
+      assert.equal(single.data.page.has_unpublished_draft, false, 'Readers are not told a draft exists');
     });
 
     await t.test('Editor import lands as draft and cannot touch pages in another vault', async () => {

@@ -338,8 +338,8 @@ export async function publishVersion(pageId: string, authorId: string, provider?
 export async function getPageContent(
   pageId: string,
   versionId?: string,
-  options?: { publishedOnly?: boolean }
-): Promise<{ content: string; versionId: string; versionNumber: number } | null> {
+  options?: { publishedOnly?: boolean; preferNewerDraft?: boolean }
+): Promise<{ content: string; versionId: string; versionNumber: number; isDraft: boolean } | null> {
   const pageRec = await db.select().from(pages).where(eq(pages.id, pageId)).limit(1);
   if (!pageRec[0]) return null;
 
@@ -370,6 +370,17 @@ export async function getPageContent(
     versionRecord = allVersions[0];
   }
 
+  // People who can edit get their working copy back: a draft saved after the current version
+  if (options?.preferNewerDraft && !versionId && !publishedOnly) {
+    const newest = await db.select().from(versions)
+      .where(eq(versions.page_id, pageId))
+      .orderBy(desc(versions.number))
+      .limit(1);
+    if (newest[0] && newest[0].status === 'draft' && (!versionRecord || newest[0].number > versionRecord.number)) {
+      versionRecord = newest[0];
+    }
+  }
+
   if (!versionRecord || !versionRecord.encrypted_blob) {
     return null;
   }
@@ -385,6 +396,7 @@ export async function getPageContent(
       content,
       versionId: versionRecord.id,
       versionNumber: versionRecord.number,
+      isDraft: versionRecord.status === 'draft',
     };
   } finally {
     dek.fill(0);

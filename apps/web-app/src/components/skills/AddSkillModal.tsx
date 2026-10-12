@@ -46,7 +46,13 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
   const [instructions, setInstructions] = useState(
     '# Skill Instructions\nYou are a specialized AI assistant. Execute analysis and output executive findings.'
   );
-  const [schemaJson, setSchemaJson] = useState('{\n  "query": "string",\n  "max_results": 10\n}');
+  // The starting example uses the input format the server accepts, so the form saves as it stands
+  const [schemaJson, setSchemaJson] = useState(JSON.stringify({
+    inputs: {
+      query: { type: 'string', required: true, description: 'What the skill should work on' },
+      max_results: { type: 'number', description: 'How many results to return' },
+    },
+  }, null, 2));
   
   // Upload State
   const [isDragging, setIsDragging] = useState(false);
@@ -530,7 +536,7 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
                 </label>
               </div>
               <textarea
-                rows={3}
+                rows={8}
                 value={schemaJson}
                 onChange={(e) => setSchemaJson(e.target.value)}
                 style={{

@@ -507,9 +507,12 @@ app.get('/api/vaults/:vaultId/pages', requireRole(['owner', 'editor', 'reader'],
           pageVersions.find((ver) => ver.page_id === p.id && ver.id === p.current_version_id && ver.status === 'published')
           || pageVersions.find((ver) => ver.page_id === p.id && ver.status === 'published');
         if (publishedOnly) return published;
-        return pageVersions.find((ver) => ver.page_id === p.id && ver.id === p.current_version_id)
+        const current = pageVersions.find((ver) => ver.page_id === p.id && ver.id === p.current_version_id)
           || published
           || pageVersions.find((ver) => ver.page_id === p.id);
+        // Owners and Editors get their working copy back: a draft saved after the current version
+        const newest = pageVersions.find((ver) => ver.page_id === p.id);
+        return newest && newest.status === 'draft' && (!current || newest.number > current.number) ? newest : current;
       };
       const visiblePages = publishedOnly ? result.filter((p: any) => Boolean(versionFor(p))) : result;
 
@@ -537,6 +540,7 @@ app.get('/api/vaults/:vaultId/pages', requireRole(['owner', 'editor', 'reader'],
             tags: p.tags,
             front_matter: cleanFrontMatter,
             content: decryptedContent,
+            has_unpublished_draft: !publishedOnly && Boolean(v) && v.status === 'draft' && v.id !== p.current_version_id,
             current_version_id: p.current_version_id,
             created_at: p.created_at.toISOString(),
             updated_at: p.updated_at.toISOString(),
@@ -574,7 +578,7 @@ app.get('/api/pages/:id', requireRole(['owner', 'editor', 'reader'], 'read_open_
     }
     const page = pageRec[0];
     const publishedOnly = (req as any).userRole === 'reader';
-    const pageContent = await getPageContent(page.id, undefined, { publishedOnly });
+    const pageContent = await getPageContent(page.id, undefined, { publishedOnly, preferNewerDraft: !publishedOnly });
     if (publishedOnly && !pageContent) {
       // Never-published pages do not exist as far as Readers are concerned
       res.status(404).json({ error: 'not_found' });
@@ -593,6 +597,7 @@ app.get('/api/pages/:id', requireRole(['owner', 'editor', 'reader'], 'read_open_
         tags: page.tags,
         front_matter: cleanFrontMatter,
         content: pageContent?.content || '',
+        has_unpublished_draft: !publishedOnly && Boolean(pageContent?.isDraft) && pageContent?.versionId !== page.current_version_id,
         current_version_id: page.current_version_id,
         created_at: page.created_at.toISOString(),
         updated_at: page.updated_at.toISOString(),

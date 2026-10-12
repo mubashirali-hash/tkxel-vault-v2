@@ -45,3 +45,13 @@ test('Markdown Importer: imports from ZIP buffer', async () => {
   assert.equal(result.totalTagsFound, 1);
   assert.equal(result.skippedFiles.length, 1);
 });
+
+test('Markdown Importer: a plain note without a declared type is imported as a note, and a declared type is kept', () => {
+  const result = new MarkdownImporter().importFromMap(new Map([
+    ['Plain.md', '# Plain\nJust some text.'],
+    ['Typed.md', '---\ntype: decision\n---\n# Typed\nA decision.'],
+  ]));
+  const byTitle = Object.fromEntries(result.pages.map((page) => [page.title, page]));
+  assert.equal(byTitle.Plain.rawFrontmatter.type, 'note');
+  assert.equal(byTitle.Typed.rawFrontmatter.type, 'decision');
+});

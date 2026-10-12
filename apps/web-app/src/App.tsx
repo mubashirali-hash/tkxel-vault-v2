@@ -1887,6 +1887,9 @@ export const App: React.FC = () => {
               const remaining = vaults.filter((v) => v.id !== shredded.id);
               setVaults(remaining);
               if (remaining.length > 0) setCurrentVault(remaining[0]);
+              // Close the settings so they never switch to showing another vault's destroy form
+              setIsVaultSettingsOpen(false);
+              showNotice('Vault destroyed', `"${shredded.name}" and everything in it has been permanently removed.`);
             }}
           />
         )}
@@ -1983,6 +1986,7 @@ export const App: React.FC = () => {
           isOpen={isAddSkillOpen}
           onClose={() => setIsAddSkillOpen(false)}
           onAddSkill={handleCreateSkill}
+          currentVault={currentVault}
         />
       </Suspense>
 

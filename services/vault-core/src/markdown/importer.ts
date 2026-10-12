@@ -97,7 +97,7 @@ export class MarkdownImporter {
           parsed.frontMatter.type = 'skill';
         }
       } else if (!parsed.frontMatter.type) {
-        parsed.frontMatter.type = isMd ? 'agent' : 'reference';
+        parsed.frontMatter.type = isMd ? 'note' : 'reference';
       }
 
       // Strip untrusted privilege escalation frontmatter fields
