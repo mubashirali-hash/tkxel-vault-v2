@@ -9,6 +9,13 @@
       "autoPort": false
     },
     {
+      "name": "skill-runner",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set PORT=3003&& set NODE_ENV=development&& set ALLOW_DEV_MOCK_KMS=true&& set ALLOW_DEV_HOST_SANDBOX=true&& set LLM_CLI_COMMAND=C:\\Users\\mubashir.ali\\AppData\\Local\\agy\\bin\\agy.exe&& node --env-file=.env services/skill-runner/dist/server.js"],
+      "port": 3003,
+      "autoPort": false
+    },
+    {
       "name": "web-app",
       "runtimeExecutable": "cmd",
       "runtimeArgs": ["/c", "set VITE_ENABLE_DEV_AUTH_BYPASS=true&& set VITE_API_URL=http://localhost:3012/api&& pnpm --filter @tkxel-vault/web-app dev"],
