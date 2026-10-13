@@ -1,0 +1,56 @@
+# Production overlay: TLS termination and no directly published service ports (NFR-03).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d --build
+#
+# Required in addition to the base file's variables:
+#   VAULT_DOMAIN   Public DNS name that resolves to this host, e.g. vault.example.com
+#   ACME_EMAIL     Contact address for certificate issuance
+#
+# Only ports 80 and 443 are published, both by Caddy. PostgreSQL, Redis, the API server, the MCP gateway
+# and the web app are reachable only on the internal Docker network.
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: tkxel-vault-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - VAULT_DOMAIN=${VAULT_DOMAIN:?VAULT_DOMAIN is required for TLS}
+      - ACME_EMAIL=${ACME_EMAIL:?ACME_EMAIL is required for certificate issuance}
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web-app
+      - api-server
+      - mcp-gateway
+
+  postgres:
+    ports: !reset []
+
+  redis:
+    ports: !reset []
+
+  api-server:
+    ports: !reset []
+
+  mcp-gateway:
+    ports: !reset []
+    environment:
+      - MCP_PUBLIC_URL=https://${VAULT_DOMAIN:?VAULT_DOMAIN is required for TLS}
+
+  web-app:
+    ports: !reset []
+    build:
+      args:
+        # Same origin as the page, so no API host is baked into the bundle
+        VITE_API_URL: /api
+        VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+        VITE_ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-}
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,19 @@
+{
+  "name": "@tkxel-vault/types",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared TypeScript domain models, schemas, and protocol types for tkxel Vault",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test test/**/*.test.js",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.7.3"
+  }
+}

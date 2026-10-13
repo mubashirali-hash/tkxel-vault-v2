@@ -1,0 +1,9 @@
+{
+  "criterion": "AC-7",
+  "name": "Rapid Revocation Enforcement",
+  "status": "passed",
+  "executionTimeMs": 13,
+  "revocationDurationMs": 2,
+  "slaTargetMs": 60000,
+  "revocationStore": "Redis distributed key-value store with TTL"
+}

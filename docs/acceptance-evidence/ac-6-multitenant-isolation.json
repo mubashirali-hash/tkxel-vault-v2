@@ -1,0 +1,39 @@
+{
+  "criterion": "AC-6",
+  "name": "Strict Multi-Tenant Isolation",
+  "status": "passed",
+  "executionTimeMs": 148,
+  "testedReader": "reader_93d678a5@acceptance.test",
+  "unauthorizedAttacker": "unauthorized_93d678a5@attacker.test",
+  "targetVaultId": "f2e5a236-1516-4868-8db2-452769001627",
+  "attacksEvaluated": [
+    {
+      "protocol": "MCP HTTP",
+      "tool": "search",
+      "result": "blocked (isError/not_allowed)"
+    },
+    {
+      "protocol": "MCP HTTP",
+      "tool": "get_page",
+      "result": "blocked (isError/not_allowed)"
+    },
+    {
+      "protocol": "MCP HTTP",
+      "tool": "get_context",
+      "result": "blocked (isError/not_allowed)"
+    },
+    {
+      "protocol": "REST HTTP",
+      "endpoint": "/api/run-skill",
+      "httpStatus": 403,
+      "error": "not_allowed"
+    },
+    {
+      "protocol": "REST HTTP",
+      "endpoint": "/api/ask-vault",
+      "httpStatus": 403,
+      "error": "not_allowed"
+    }
+  ],
+  "isolationEnforced": "Generic not_allowed / zero disclosure verified across MCP and REST HTTP boundaries"
+}

@@ -1,0 +1,12 @@
+node_modules
+.turbo
+dist
+.git
+.github
+my_agents_and_skills.zip
+*.log
+*.sqlite
+.env
+.env.*
+!.env.deploy.example
+.DS_Store
