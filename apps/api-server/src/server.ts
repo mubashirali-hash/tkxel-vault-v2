@@ -23,7 +23,7 @@ import {
 } from '@tkxel-vault/vault-core/auth';
 import { saveDraft, publishVersion, getPageContent } from '@tkxel-vault/vault-core/versions';
 import { createKmsProvider, EnvelopeEncryption } from '@tkxel-vault/vault-core/crypto';
-import { movePage, createVault, VaultValidationError, runMigrations, MarkdownChunker, renamePage, PageTitleConflictError, appendTimelineEntry, listTimelineEntries, listPageVersions, rollbackPageToVersion, unpublishPage, getUserAccessibleVaults, exportVaultArchive, ExportNotAllowedError, changeVaultMode, rekeyVault, cryptoShredVault, reindexVault, EmbeddingConfigurationError, createOidcVerifierFromEnv, recordUserGroups, normalizeSharePrincipal, resolveCrossVaultLinks, storeVaultAsset, readVaultAsset, getAssetVaultId, MAX_ASSET_BYTES, getVaultRateLimits, setVaultRateLimits, requestBreakGlass, decideBreakGlass, revokeBreakGlass, listBreakGlassRequests, getConfiguredGlobalOwners, recordAccessDenial, isVaultShredded, LinkGraphIndexer, assertProductionConfig } from '@tkxel-vault/vault-core';
+import { movePage, createVault, VaultValidationError, runMigrations, MarkdownChunker, renamePage, PageTitleConflictError, appendTimelineEntry, listTimelineEntries, listPageVersions, rollbackPageToVersion, unpublishPage, getUserAccessibleVaults, exportVaultArchive, ExportNotAllowedError, changeVaultMode, rekeyVault, cryptoShredVault, reindexVault, EmbeddingConfigurationError, createOidcVerifierFromEnv, recordUserGroups, normalizeSharePrincipal, resolveCrossVaultLinks, storeVaultAsset, readVaultAsset, getAssetVaultId, MAX_ASSET_BYTES, getVaultRateLimits, setVaultRateLimits, requestBreakGlass, decideBreakGlass, revokeBreakGlass, listBreakGlassRequests, getConfiguredGlobalOwners, recordAccessDenial, isVaultShredded, LinkGraphIndexer, assertProductionConfig, listBreakGlassCandidates } from '@tkxel-vault/vault-core';
 import crypto from 'node:crypto';
 import { aiRouter } from './routes/ai.js';
 import { isDevAuthBypassEnabled, getSsoAudience } from './auth/dev-bypass.js';
@@ -1312,6 +1312,16 @@ app.get('/api/vaults/:vaultId/break-glass', async (req: Request, res: Response) 
     const permitted = owner[0] && (owner[0].owner_id.toLowerCase().trim() === userId || getConfiguredGlobalOwners().includes(userId));
     if (!permitted) throw new Error('not_allowed');
     res.json({ requests: await listBreakGlassRequests(vaultId) });
+  } catch (error) {
+    breakGlassError(res, error);
+  }
+});
+
+// GET /api/break-glass/vaults: locked vaults an administrator may ask emergency access to. Anyone
+// who is not an administrator gets an empty list, with no hint that the route means anything.
+app.get('/api/break-glass/vaults', async (req: Request, res: Response) => {
+  try {
+    res.json({ vaults: await listBreakGlassCandidates(String((req as any).userId || '')) });
   } catch (error) {
     breakGlassError(res, error);
   }

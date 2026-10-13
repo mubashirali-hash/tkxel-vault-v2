@@ -206,3 +206,50 @@ export async function listBreakGlassRequests(vaultId: string): Promise<BreakGlas
     .limit(100);
   return rows.map(toRecord);
 }
+
+/** A locked vault an administrator may ask emergency access to, with their latest request for it. */
+export interface BreakGlassCandidate {
+  vault_id: string;
+  name: string;
+  owner_id: string;
+  /** The administrator's most recent request for this vault, if any. */
+  request: BreakGlassRequestRecord | null;
+  /** True while an approved grant has not expired. */
+  access_active: boolean;
+}
+
+/**
+ * Locked vaults the administrator does not own, so that an emergency request can be raised from
+ * the web app. Only the name and Owner are disclosed, and only to administrators; anyone else gets
+ * an empty list, which is also how the app decides whether to offer the screen at all.
+ */
+export async function listBreakGlassCandidates(userId: string): Promise<BreakGlassCandidate[]> {
+  const admin = (userId || '').toLowerCase().trim();
+  if (!admin || !isAdministrator(admin)) return [];
+
+  const lockedVaults = (await db.select().from(vaults).where(eq(vaults.mode, 'locked')))
+    .filter((vault) => vault.owner_id.toLowerCase().trim() !== admin)
+    // A destroyed vault keeps a sealed record but is no longer a place anyone can be let into
+    .filter((vault) => !(typeof vault.data_key_id === 'string' && vault.data_key_id.startsWith('shredded:')));
+  if (lockedVaults.length === 0) return [];
+
+  const mine = await db.select().from(breakGlassRequests)
+    .where(sql`lower(${breakGlassRequests.requester_id}) = ${admin}`)
+    .orderBy(desc(breakGlassRequests.requested_at));
+  const latest = new Map<string, BreakGlassRequestRecord>();
+  for (const row of mine) if (!latest.has(row.vault_id)) latest.set(row.vault_id, toRecord(row));
+
+  const now = Date.now();
+  return lockedVaults
+    .map((vault) => {
+      const request = latest.get(vault.id) ?? null;
+      return {
+        vault_id: vault.id,
+        name: vault.name,
+        owner_id: vault.owner_id,
+        request,
+        access_active: Boolean(request && request.status === 'approved' && request.expires_at && new Date(request.expires_at).getTime() > now),
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+}

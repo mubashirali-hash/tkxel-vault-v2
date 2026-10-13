@@ -34,6 +34,8 @@ export interface AppShellProps {
   onOpenVaultSettings?: () => void;
   /** Reference pages of a locked vault, for Owners and Editors. */
   onOpenLockedPages?: () => void;
+  /** Given only to administrators who have a locked vault they could ask access to. */
+  onOpenEmergencyAccess?: () => void;
   onOpenMcpModal?: () => void;
   onOpenCreateVault?: () => void;
   onLogout?: () => void;
@@ -44,7 +46,7 @@ export const AppShell: React.FC<AppShellProps> = ({
   currentVault, vaults, currentRole, currentTab, userInfo,
   navigationOpen, navigationCollapsed, navigationAvailable, onToggleNavigation, onCloseNavigation,
   onSelectVault, onDeleteVault, onChangeVaultMode, onSelectTab, onOpenShareModal, onOpenExportModal,
-  onOpenImportModal, onReindexVault, onOpenVaultSettings, onOpenLockedPages, onOpenMcpModal, onOpenCreateVault, onLogout, children,
+  onOpenImportModal, onReindexVault, onOpenVaultSettings, onOpenLockedPages, onOpenEmergencyAccess, onOpenMcpModal, onOpenCreateVault, onLogout, children,
 }) => {
   const [vaultDropdownOpen, setVaultDropdownOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -113,6 +115,9 @@ export const AppShell: React.FC<AppShellProps> = ({
       : []),
     ...(currentRole === 'owner' && onOpenVaultSettings
       ? [{ id: 'vault-settings', label: 'Vault settings', icon: <Lock size={16} />, onSelect: onOpenVaultSettings }]
+      : []),
+    ...(onOpenEmergencyAccess
+      ? [{ id: 'emergency-access', label: 'Emergency access', icon: <Lock size={16} />, onSelect: onOpenEmergencyAccess }]
       : []),
     {
       id: 'ai-toggle',

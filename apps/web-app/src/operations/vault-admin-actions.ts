@@ -61,6 +61,20 @@ export async function listBreakGlassApi(vaultId: string, options?: ApiRequestOpt
   return (await call<{ requests: BreakGlassRequest[] }>('GET', `/api/vaults/${vaultId}/break-glass`, undefined, options)).requests;
 }
 
+/** A locked vault an administrator may ask emergency access to. */
+export interface EmergencyVault {
+  vault_id: string;
+  name: string;
+  owner_id: string;
+  request: BreakGlassRequest | null;
+  access_active: boolean;
+}
+
+/** Empty for anyone who is not an administrator. */
+export async function listEmergencyVaultsApi(options?: ApiRequestOptions) {
+  return (await call<{ vaults: EmergencyVault[] }>('GET', '/api/break-glass/vaults', undefined, options)).vaults;
+}
+
 export async function requestBreakGlassApi(vaultId: string, reason: string, options?: ApiRequestOptions) {
   return (await call<{ request: BreakGlassRequest }>('POST', `/api/vaults/${vaultId}/break-glass`, { reason }, options)).request;
 }

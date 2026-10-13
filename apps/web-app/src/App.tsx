@@ -8,6 +8,7 @@ import { MarkdownEditor } from './components/editor/MarkdownEditor.js';
 const KnowledgeGraph = React.lazy(() => import('./components/graph/KnowledgeGraph.js').then(m => ({ default: m.KnowledgeGraph })));
 const AuditViewer = React.lazy(() => import('./components/audit/AuditViewer.js').then(m => ({ default: m.AuditViewer })));
 const LockedPagesModal = React.lazy(() => import('./components/vault/LockedPagesModal.js').then(m => ({ default: m.LockedPagesModal })));
+const EmergencyAccessModal = React.lazy(() => import('./components/vault/EmergencyAccessModal.js').then(m => ({ default: m.EmergencyAccessModal })));
 const VaultSettingsModal = React.lazy(() => import('./components/vault/VaultSettingsModal.js').then(m => ({ default: m.VaultSettingsModal })));
 const SharingModal = React.lazy(() => import('./components/sharing/SharingModal.js').then(m => ({ default: m.SharingModal })));
 const ExportModal = React.lazy(() => import('./components/export/ExportModal.js').then(m => ({ default: m.ExportModal })));
@@ -20,6 +21,7 @@ const MoveToVaultModal = React.lazy(() => import('./components/vault/MoveToVault
 import { SkillItem } from './components/skills/AddSkillModal.js';
 import { API_URL } from './utils/api-base.js';
 import { Dialog, Button } from './components/ui/index.js';
+import { listEmergencyVaultsApi } from './operations/vault-admin-actions.js';
 import { createSkillApi, deleteSkillApi } from './operations/skill-actions.js';
 import { loadVaultData, saveVaultLocalCache, addVaultShareApi, revokeVaultShareApi, importVaultData, deletePageApi, getAuthToken, setAuthToken, removeAuthToken } from './utils/storage.js';
 import {
@@ -187,6 +189,11 @@ export const App: React.FC = () => {
       } catch (e) {
         // invalid token fallback
       }
+    }
+    // Local development sign-in as a test address: the address is carried in the token itself
+    if (token && token.startsWith('test_user:')) {
+      const email = token.slice('test_user:'.length).trim();
+      if (email) return { email, name: `${email} (Local test user)` };
     }
     if (token === 'dev_admin_token') {
       const defaultEmail = (import.meta.env.VITE_VAULT_OWNER_EMAIL || 'mubashir.ali@camp1.tkxel.com').split(',')[0].trim();
@@ -461,6 +468,20 @@ export const App: React.FC = () => {
   // Modal Dialog States
   const [isShareOpen, setIsShareOpen] = useState(false);
   const [isVaultSettingsOpen, setIsVaultSettingsOpen] = useState(false);
+  // Emergency access is offered only to administrators with a locked vault they do not own
+  const [isEmergencyAccessOpen, setIsEmergencyAccessOpen] = useState(false);
+  const [hasEmergencyVaults, setHasEmergencyVaults] = useState(false);
+  useEffect(() => {
+    if (!ssoToken || !vaultListSettled) {
+      setHasEmergencyVaults(false);
+      return;
+    }
+    let current = true;
+    listEmergencyVaultsApi({ token: ssoToken })
+      .then((list) => { if (current) setHasEmergencyVaults(list.length > 0); })
+      .catch(() => { if (current) setHasEmergencyVaults(false); });
+    return () => { current = false; };
+  }, [ssoToken, vaultListSettled]);
   const [isLockedPagesOpen, setIsLockedPagesOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
@@ -1540,6 +1561,7 @@ export const App: React.FC = () => {
       onOpenImportModal={() => setIsImportOpen(true)}
       onReindexVault={handleReindexVault}
       onOpenVaultSettings={() => setIsVaultSettingsOpen(true)}
+      onOpenEmergencyAccess={hasEmergencyVaults ? () => setIsEmergencyAccessOpen(true) : undefined}
       onOpenLockedPages={() => setIsLockedPagesOpen(true)}
       onOpenMcpModal={() => setIsMcpOpen(true)}
       onOpenCreateVault={() => setIsCreateVaultOpen(true)}
@@ -1950,6 +1972,13 @@ export const App: React.FC = () => {
             canPublish={currentRole === 'owner'}
             token={ssoToken || getAuthToken()}
             onClose={() => setIsLockedPagesOpen(false)}
+          />
+        )}
+        {isEmergencyAccessOpen && (
+          <EmergencyAccessModal
+            isOpen={isEmergencyAccessOpen}
+            token={ssoToken || getAuthToken()}
+            onClose={() => setIsEmergencyAccessOpen(false)}
           />
         )}
         {isVaultSettingsOpen && (

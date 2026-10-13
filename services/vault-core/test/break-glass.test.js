@@ -5,7 +5,7 @@ import { db, pool } from '../dist/db.js';
 import * as schema from '../dist/schema/index.js';
 import { eq, inArray, and } from 'drizzle-orm';
 import { getUserRoleForVault, getUserAccessibleVaults, authorizeVaultOperation } from '../dist/auth/index.js';
-import { requestBreakGlass, decideBreakGlass, revokeBreakGlass, listBreakGlassRequests } from '../dist/vault/break-glass.js';
+import { requestBreakGlass, decideBreakGlass, revokeBreakGlass, listBreakGlassRequests, listBreakGlassCandidates } from '../dist/vault/break-glass.js';
 import { runMigrations } from '../dist/schema/migrator.js';
 
 test('NFR-06: administrators have no standing access to locked vaults; break-glass needs two people and expires', async (t) => {
@@ -40,6 +40,19 @@ test('NFR-06: administrators have no standing access to locked vaults; break-gla
     });
 
     let requestId;
+    await t.test('administrators can find the locked vaults to ask for; nobody else can', async () => {
+      const candidates = await listBreakGlassCandidates(adminA);
+      const mine = candidates.find((c) => c.vault_id === lockedId);
+      assert.ok(mine, 'a locked vault the administrator does not own is offered');
+      assert.deepEqual({ name: mine.name, owner: mine.owner_id, request: mine.request, active: mine.access_active }, { name: 'BG Locked', owner: vaultOwner, request: null, active: false });
+      assert.ok(!candidates.some((c) => c.vault_id === openId), 'open vaults are not emergency-access targets');
+      assert.deepEqual(Object.keys(mine).sort(), ['access_active', 'name', 'owner_id', 'request', 'vault_id'], 'only the name and Owner are disclosed');
+      // Not an administrator: nothing at all, including for the vault's own Owner
+      assert.deepEqual(await listBreakGlassCandidates(outsider), []);
+      assert.deepEqual(await listBreakGlassCandidates(vaultOwner), []);
+      assert.deepEqual(await listBreakGlassCandidates(''), []);
+    });
+
     await t.test('a request alone grants nothing and is audited with an alert', async () => {
       await assert.rejects(() => requestBreakGlass({ vaultId: lockedId, requesterId: outsider, reason }), { message: 'not_allowed' });
       await assert.rejects(() => requestBreakGlass({ vaultId: lockedId, requesterId: adminA, reason: 'too short' }), /reason/);
