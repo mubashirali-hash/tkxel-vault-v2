@@ -216,6 +216,21 @@ export class OpenAiLlmProvider implements LlmProvider {
 /**
  * Factory that returns the configured LLM provider.
  */
+/**
+ * True when the note assistant has a model to call: an approved key in any environment, or the
+ * built-in stand-in outside production. A production deployment with no model key runs without
+ * the assistant instead of failing each request.
+ */
+export function isLlmProviderAvailable(env: Record<string, string | undefined> = process.env): boolean {
+  const anthropicKey = env.ANTHROPIC_API_KEY?.trim();
+  if (anthropicKey && anthropicKey.startsWith('sk-ant-') && anthropicKey !== 'sk-ant-dummy_key') return true;
+  const geminiKey = env.GEMINI_API_KEY?.trim();
+  if (geminiKey && geminiKey.length > 10 && geminiKey !== 'dummy_key') return true;
+  const openAiKey = env.OPENAI_API_KEY?.trim();
+  if (openAiKey && openAiKey.startsWith('sk-') && openAiKey !== 'sk-dummy_key') return true;
+  return env.NODE_ENV !== 'production';
+}
+
 export function getLlmProvider(): LlmProvider {
   const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (anthropicKey && anthropicKey.startsWith('sk-ant-') && anthropicKey !== 'sk-ant-dummy_key') {

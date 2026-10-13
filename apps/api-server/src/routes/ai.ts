@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { NotesAssistant } from '../ai/notes-assistant.js';
+import { isLlmProviderAvailable } from '../ai/llm-provider.js';
 
 export const aiRouter: Router = Router();
 const assistant = new NotesAssistant();
@@ -9,7 +10,9 @@ const assistant = new NotesAssistant();
  */
 export const isAiPluginEnabled = (req?: Request): boolean => {
   if (req?.headers['x-disable-ai-plugin'] === 'true') return false;
-  return process.env.ENABLE_AI_PLUGIN !== 'false';
+  if (process.env.ENABLE_AI_PLUGIN === 'false') return false;
+  // No model key in production: the assistant is off, and every other feature works as usual
+  return isLlmProviderAvailable();
 };
 
 /**
@@ -22,7 +25,7 @@ aiRouter.use((req: Request, res: Response, next: NextFunction): void => {
     res.status(200).json({
       success: false,
       enabled: false,
-      message: 'AI Plugin is disabled by configuration (ENABLE_AI_PLUGIN=false). Zero AI operations executed.',
+      message: 'The AI plugin is switched off on this server (no model key is configured, or ENABLE_AI_PLUGIN=false). Zero AI operations executed.',
     });
     return;
   }
