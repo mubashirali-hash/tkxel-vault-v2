@@ -78,8 +78,9 @@ services:
       - AZURE_KEY_VAULT_KEY_NAME=${AZURE_KEY_VAULT_KEY_NAME:-}
       - AZURE_KEY_VAULT_BEARER_TOKEN=${AZURE_KEY_VAULT_BEARER_TOKEN:-}
       - ALLOW_DEV_MOCK_KMS=${ALLOW_DEV_MOCK_KMS:-false}
-      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:?EMBEDDING_PROVIDER is required}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+      # "openai" for semantic search (needs OPENAI_API_KEY), or "none" for keyword search only
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:?EMBEDDING_PROVIDER is required (openai, or none for keyword search only)}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
     ports:
       - "3002:3002"
@@ -138,10 +139,14 @@ services:
       - AZURE_KEY_VAULT_URL=${AZURE_KEY_VAULT_URL:-}
       - AZURE_KEY_VAULT_KEY_NAME=${AZURE_KEY_VAULT_KEY_NAME:-}
       - AZURE_KEY_VAULT_BEARER_TOKEN=${AZURE_KEY_VAULT_BEARER_TOKEN:-}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY is required}
+      # Required by the runner itself in production: without it the runner refuses to start. A deployment
+      # with no model key leaves the runner out (docker compose up --scale skill-runner=0); skills and
+      # ask_vault then answer that they are unavailable, and everything else works.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-opus-5-5}
-      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:?EMBEDDING_PROVIDER is required}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+      # "openai" for semantic search (needs OPENAI_API_KEY), or "none" for keyword search only
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:?EMBEDDING_PROVIDER is required (openai, or none for keyword search only)}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
     expose:
       - "3003"
@@ -181,8 +186,9 @@ services:
       - AZURE_KEY_VAULT_KEY_NAME=${AZURE_KEY_VAULT_KEY_NAME:-}
       - AZURE_KEY_VAULT_BEARER_TOKEN=${AZURE_KEY_VAULT_BEARER_TOKEN:-}
       - ALLOW_DEV_MOCK_KMS=${ALLOW_DEV_MOCK_KMS:-false}
-      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:?EMBEDDING_PROVIDER is required}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+      # "openai" for semantic search (needs OPENAI_API_KEY), or "none" for keyword search only
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:?EMBEDDING_PROVIDER is required (openai, or none for keyword search only)}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
       - SSO_WEBHOOK_SECRET=${SSO_WEBHOOK_SECRET:?SSO_WEBHOOK_SECRET is required}
       # Public HTTPS URL of the gateway, advertised to MCP clients for OAuth discovery
@@ -199,6 +205,8 @@ services:
         condition: service_healthy
       skill-runner:
         condition: service_started
+        # The gateway also runs without the runner (a deployment with no model key)
+        required: false
       migration:
         condition: service_completed_successfully
 

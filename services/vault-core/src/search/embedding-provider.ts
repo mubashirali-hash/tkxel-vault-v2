@@ -380,6 +380,14 @@ export interface EmbeddingProviderOptions {
   delayFn?: (ms: number) => Promise<void>;
 }
 
+/** EMBEDDING_PROVIDER value that deliberately runs the vault with keyword search only. */
+export const SEMANTIC_SEARCH_OFF = 'none';
+
+/** True when the deployment has explicitly chosen keyword search only. */
+export function isSemanticSearchOff(env: Record<string, string | undefined> = process.env): boolean {
+  return env.EMBEDDING_PROVIDER?.trim().toLowerCase() === SEMANTIC_SEARCH_OFF;
+}
+
 /**
  * Factory function returning configured embedding provider.
  * Fail-closed:
@@ -403,6 +411,14 @@ export function getEmbeddingProvider(options?: EmbeddingProviderOptions): Embedd
       isProduction
         ? 'Missing required EMBEDDING_PROVIDER in production environment. Production must explicitly configure an authorized provider.'
         : 'Missing required EMBEDDING_PROVIDER. Provider must be explicitly configured as "openai" or "deterministic" (test-only).'
+    );
+  }
+
+  if (provider === SEMANTIC_SEARCH_OFF) {
+    // An explicit choice, not a missing setting: search works by keywords only and nothing is sent
+    // to any embedding service. Callers already treat this error as "index the text without vectors".
+    throw new EmbeddingConfigurationError(
+      'Semantic search is switched off (EMBEDDING_PROVIDER=none). Search uses keywords only.'
     );
   }
 
@@ -440,6 +456,6 @@ export function getEmbeddingProvider(options?: EmbeddingProviderOptions): Embedd
   }
 
   throw new EmbeddingConfigurationError(
-    `Unknown embedding provider "${provider}". Supported providers are "openai" or "deterministic" (test-only).`
+    `Unknown embedding provider "${provider}". Supported providers are "openai", "none" (keyword search only) or "deterministic" (test-only).`
   );
 }

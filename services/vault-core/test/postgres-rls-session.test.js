@@ -79,7 +79,22 @@ test('PostgreSQL RLS Defense-in-Depth: Session context strictly filters rows at 
     const hasPolicy = await db.execute(sql`SELECT 1 FROM pg_policies WHERE policyname = 'pages_select'`);
     if (hasPolicy.rows.length === 0) {
       const rlsSql = fs.readFileSync(path.resolve(__dirname, '../src/schema/rls.sql'), 'utf-8');
-      await db.execute(sql.raw(rlsSql));
+      // Enabling row-level security takes an exclusive lock on each table. Other test files use the
+      // same tables at the same time, so PostgreSQL may pick this statement as a deadlock victim and
+      // roll it back whole. Retrying is the documented handling; nothing about the checks changes.
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await db.execute(sql.raw(rlsSql));
+          break;
+        } catch (error) {
+          const code = error?.cause?.code ?? error?.code;
+          if (code !== '40P01' || attempt >= 8) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+          // Another test file may have applied the policies while this one was waiting
+          const applied = await db.execute(sql`SELECT 1 FROM pg_policies WHERE policyname = 'pages_select'`);
+          if (applied.rows.length > 0) break;
+        }
+      }
     }
 
     // 2. Query as Alice with RLS session context

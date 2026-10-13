@@ -3,7 +3,7 @@ import { db } from '../db.js';
 import { pages, vaults, chunks, versions, links } from '../schema/index.js';
 import { createKmsProvider, EnvelopeEncryption } from '../crypto/kms.js';
 import { MarkdownChunker } from './chunker.js';
-import { getEmbeddingProvider, EmbeddingProvider, validateEmbeddingBatch } from './embedding-provider.js';
+import { getEmbeddingProvider, EmbeddingProvider, validateEmbeddingBatch, isSemanticSearchOff } from './embedding-provider.js';
 import { lockPageForMutation } from '../storage/page-lock.js';
 
 export interface ReindexResult {
@@ -117,14 +117,19 @@ export async function reindexPage(
       const chunker = new MarkdownChunker({ maxTokensPerChunk: 400, overlapTokens: 50 });
 
       // 5. Chunk and embed everything before any row changes, inside the lock boundary
-      const provider = options?.provider ?? getEmbeddingProvider();
+      // With semantic search explicitly switched off, the keyword index is rebuilt without vectors
+      const keywordOnly = !options?.provider && isSemanticSearchOff();
+      const provider = keywordOnly ? null : (options?.provider ?? getEmbeddingProvider());
       const prepared: Array<{ versionId: string; docChunks: ReturnType<MarkdownChunker['chunk']>; embeddings: number[][] }> = [];
       for (const version of targetVersions) {
         const plaintext = EnvelopeEncryption.decryptToString(version.encrypted_blob, dek);
         const versionChunks = chunker.chunk(plaintext);
         if (versionChunks.length === 0) continue;
-        const embeddings = await provider.generateEmbeddings(versionChunks.map((c) => c.content));
-        validateEmbeddingBatch(embeddings, versionChunks.length);
+        let embeddings: number[][] = [];
+        if (provider) {
+          embeddings = await provider.generateEmbeddings(versionChunks.map((c) => c.content));
+          validateEmbeddingBatch(embeddings, versionChunks.length);
+        }
         prepared.push({ versionId: version.id, docChunks: versionChunks, embeddings });
       }
 
@@ -149,7 +154,7 @@ export async function reindexPage(
             position: c.chunkIndex,
             encrypted_text: EnvelopeEncryption.encrypt(c.content, dek!),
             tsv_content: sql`to_tsvector('english', ${c.content})`,
-            embedding: entry.embeddings[i],
+            embedding: entry.embeddings[i] ?? null,
           });
         }
       }
