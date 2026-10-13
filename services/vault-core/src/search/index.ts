@@ -27,6 +27,13 @@ export interface SearchPagesOptions {
    * Results are identical to the indexed query; this exists so tests can prove that.
    */
   legacyScan?: boolean;
+  /**
+   * Keyword search normally needs every word of the query to match. With this set, when that finds
+   * fewer pages than asked for, pages matching any of the words are added after them, best match
+   * first. It lets a question asked in plain words ("why did we choose a phased go-live?") still
+   * reach the right page when no semantic search is available. Used by the retrieval tools.
+   */
+  matchAnyFallback?: boolean;
 }
 
 export interface PageSearchResult {
@@ -130,11 +137,8 @@ export async function searchPages(
     const parsed: any = await db.execute(sql`SELECT websearch_to_tsquery('english', ${cleanQuery})::text AS parsed`);
     const hasTerms = (parsed.rows?.[0]?.parsed ?? '') !== '';
 
-    const lexicalRows: any = hasTerms && !options?.legacyScan
-      // Indexed: `search_tsv` holds title || tags || chunk text for each chunk and `meta_tsv` holds
-      // title || tags for each page (migration 0010), so both arms are GIN index lookups. The second
-      // arm covers pages that have no chunks, which the scan reached through its LEFT JOIN.
-      ? await db.execute(sql`
+    const strictQuery = sql`websearch_to_tsquery('english', ${cleanQuery})`;
+    const runIndexed = (tsq: typeof strictQuery) => db.execute(sql`
       SELECT m.page_id, m.title, m.type, m.tags, m.chunk_id, m.chunk_position, m.rank_score
       FROM (
         SELECT p.id as page_id, p.title, p.type, p.tags, c.id as chunk_id, c.position as chunk_position,
@@ -144,11 +148,11 @@ export async function searchPages(
           -- vault and version checks are applied to the matches only
           SELECT c1.id, c1.page_id, c1.version_id, c1.position, c1.tsv_content
           FROM ${chunks} c1
-          WHERE c1.search_tsv @@ websearch_to_tsquery('english', ${cleanQuery})
+          WHERE c1.search_tsv @@ ${tsq}
           OFFSET 0
         ) c
         JOIN ${pages} p ON p.id = c.page_id
-        CROSS JOIN (SELECT websearch_to_tsquery('english', ${cleanQuery}) as query_parsed) q
+        CROSS JOIN (SELECT ${tsq} as query_parsed) q
         WHERE ${pageFilter}
           AND ${visible('c')}
         UNION ALL
@@ -163,14 +167,20 @@ export async function searchPages(
                     THEN 0.20 ELSE 0.0 END
              )`} as rank_score
         FROM ${pages} p
-        CROSS JOIN (SELECT websearch_to_tsquery('english', ${cleanQuery}) as query_parsed) q
+        CROSS JOIN (SELECT ${tsq} as query_parsed) q
         WHERE ${pageFilter}
-          AND p.meta_tsv @@ websearch_to_tsquery('english', ${cleanQuery})
+          AND p.meta_tsv @@ ${tsq}
           AND NOT EXISTS (SELECT 1 FROM ${chunks} c0 WHERE c0.page_id = p.id AND ${visible('c0')})
       ) m
       ORDER BY m.rank_score DESC, m.page_id ASC, COALESCE(m.chunk_position, 0) ASC, COALESCE(m.chunk_id, '00000000-0000-0000-0000-000000000000'::uuid) ASC
       LIMIT 25
-    `)
+    `);
+
+    const lexicalRows: any = hasTerms && !options?.legacyScan
+      // Indexed: `search_tsv` holds title || tags || chunk text for each chunk and `meta_tsv` holds
+      // title || tags for each page (migration 0010), so both arms are GIN index lookups. The second
+      // arm covers pages that have no chunks, which the scan reached through its LEFT JOIN.
+      ? await runIndexed(strictQuery)
       : await db.execute(sql`
       SELECT p.id as page_id, p.title, p.type, p.tags, c.id as chunk_id, c.position as chunk_position,
              ${rankScore} as rank_score
@@ -191,7 +201,7 @@ export async function searchPages(
       LIMIT 25
     `);
 
-    lexicalResults = (lexicalRows.rows || []).map((r: any) => {
+    const toItems = (rows: any[]): SearchResultItem[] => rows.map((r: any) => {
       const rawScore = Number(r.rank_score);
       const score = !Number.isNaN(rawScore) ? rawScore : 0.0;
       return {
@@ -206,6 +216,17 @@ export async function searchPages(
         source: 'lexical' as const,
       };
     });
+    lexicalResults = toItems(lexicalRows.rows || []);
+
+    // Plain-word questions: when requiring every word found too few pages, add pages matching any word.
+    // Negated terms are left alone, since "any of these, or not that" would match nearly everything.
+    const parsedText: string = parsed.rows?.[0]?.parsed ?? '';
+    const strictPages = new Set(lexicalResults.map((item) => item.pageId));
+    if (options?.matchAnyFallback && hasTerms && !options?.legacyScan && strictPages.size < limit
+        && parsedText.includes(' & ') && !parsedText.includes('!')) {
+      const anyWord: any = await runIndexed(sql`replace(websearch_to_tsquery('english', ${cleanQuery})::text, ' & ', ' | ')::tsquery`);
+      lexicalResults = lexicalResults.concat(toItems(anyWord.rows || []).filter((item) => !strictPages.has(item.pageId)));
+    }
   }
 
   // 3. Dense Vector semantic search (pgvector cosine distance)

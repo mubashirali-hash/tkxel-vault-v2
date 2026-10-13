@@ -7,6 +7,39 @@ import { alias } from 'drizzle-orm/pg-core';
 import { OpenVaultStore } from './open-retrieval.js';
 import crypto from 'node:crypto';
 
+const SNIPPET_LENGTH = 240;
+
+/**
+ * Cuts a readable passage out of a page: front matter and the title heading are skipped, and the
+ * passage is centred on the earliest query word that appears, or starts at the top when none does.
+ */
+export function makeSnippet(markdown: string, words: string[], length: number = SNIPPET_LENGTH): string {
+  const body = markdown
+    .replace(/^---\n[\s\S]*?\n---\n?/, '')
+    .replace(/^\s*#\s.*\n?/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!body) return '';
+  const lower = body.toLowerCase();
+  let hit = -1;
+  for (const word of words) {
+    const at = lower.indexOf(word);
+    if (at !== -1 && (hit === -1 || at < hit)) hit = at;
+  }
+  if (body.length <= length) return body;
+  let start = hit === -1 ? 0 : Math.max(0, hit - Math.floor(length / 3));
+  if (start > 0) {
+    const space = body.indexOf(' ', start);
+    if (space !== -1 && space - start < 30) start = space + 1;
+  }
+  let end = Math.min(body.length, start + length);
+  if (end < body.length) {
+    const space = body.lastIndexOf(' ', end);
+    if (space > start + length / 2) end = space;
+  }
+  return (start > 0 ? '… ' : '') + body.slice(start, end).trim() + (end < body.length ? ' …' : '');
+}
+
 export class PostgresOpenVaultStore implements OpenVaultStore {
   /**
    * Search pages in the database using keyword and ILIKE matching on title, tags, and body.
@@ -23,11 +56,14 @@ export class PostgresOpenVaultStore implements OpenVaultStore {
         publishedOnly: true,
         types: filters?.types,
         tags: filters?.tags,
+        // A question asked in plain words still reaches the right page when no word-for-word match exists
+        matchAnyFallback: true,
       });
+      const snippets = await this.snippetsFor(results.map((r: any) => r.id), targetVault, query);
       return results.map((r: any) => ({
         id: r.id,
         title: r.title,
-        snippet: r.snippet || `# ${r.title}`,
+        snippet: snippets.get(r.id) || `# ${r.title}`,
         type: r.type,
         score: r.score,
       }));
@@ -35,6 +71,43 @@ export class PostgresOpenVaultStore implements OpenVaultStore {
       console.warn('Fallback in search:', err);
       return [];
     }
+  }
+
+  /**
+   * A short passage from each result's published text, centred on the first query word found in it.
+   * The caller may already read these pages in full through get_page, so nothing new is disclosed;
+   * the vault key is unwrapped once for the whole batch and wiped afterwards.
+   */
+  private async snippetsFor(pageIds: string[], vaultId: string, query: string): Promise<Map<string, string>> {
+    const snippets = new Map<string, string>();
+    if (pageIds.length === 0) return snippets;
+
+    const rows = await db
+      .select({ pageId: schema.pages.id, blob: schema.versions.encrypted_blob })
+      .from(schema.pages)
+      .innerJoin(schema.versions, eq(schema.versions.id, schema.pages.current_version_id))
+      .where(and(eq(schema.pages.vault_id, vaultId), inArray(schema.pages.id, pageIds), eq(schema.versions.status, 'published')));
+    if (rows.length === 0) return snippets;
+
+    const vaultRec = await db.select({ key: schema.vaults.data_key_id }).from(schema.vaults).where(eq(schema.vaults.id, vaultId)).limit(1);
+    if (!vaultRec[0]?.key) return snippets;
+    const dek = await createKmsProvider().unwrapKey(vaultRec[0].key);
+    try {
+      const words = query.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || [];
+      for (const row of rows) {
+        if (!row.blob) continue;
+        let text: string;
+        try {
+          text = EnvelopeEncryption.decryptToString(row.blob, dek);
+        } catch {
+          continue;
+        }
+        snippets.set(row.pageId, makeSnippet(text, words));
+      }
+    } finally {
+      dek.fill(0);
+    }
+    return snippets;
   }
 
   /**

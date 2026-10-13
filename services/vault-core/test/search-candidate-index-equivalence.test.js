@@ -100,6 +100,27 @@ test('Keyword search returns identical results through the index and through the
     assert.equal((await searchPages(vaultId, '"proposal commercial"', 10, { mode: 'lexical', legacyScan: false })).length, 0);
     assert.ok((await searchPages(vaultId, 'Untitled', 10, { mode: 'lexical', legacyScan: false })).some((r) => r.title === 'Untitled Draft'));
 
+    // Plain-word questions: every word must match by default; the retrieval tools may ask for pages
+    // matching any of the words when that finds too little
+    const question = 'how does ledger reconciliation settle disputes';
+    assert.deepEqual(await searchPages(vaultId, question, 5, { mode: 'lexical' }), [], 'by default every word must match');
+    const relaxed = await searchPages(vaultId, question, 5, { mode: 'lexical', matchAnyFallback: true });
+    assert.equal(relaxed[0]?.title, 'Payment Architecture Reference', 'the page holding most of the words comes first');
+    assert.ok(relaxed.every((r) => r.source === 'lexical'));
+    // A query that already matches keeps its matches first and in the same order
+    const strictHits = await searchPages(vaultId, 'payment architecture', 3, { mode: 'lexical' });
+    const withFallback = await searchPages(vaultId, 'payment architecture', 3, { mode: 'lexical', matchAnyFallback: true });
+    assert.deepEqual(withFallback.slice(0, strictHits.length).map((r) => r.id), strictHits.map((r) => r.id));
+    // Negation is never loosened, and words found nowhere still find nothing
+    assert.deepEqual(
+      await searchPages(vaultId, 'security -kms', 10, { mode: 'lexical', matchAnyFallback: true }),
+      await searchPages(vaultId, 'security -kms', 10, { mode: 'lexical' })
+    );
+    assert.deepEqual(await searchPages(vaultId, 'pineapple xylophone', 5, { mode: 'lexical', matchAnyFallback: true }), []);
+    // The other vault holds the same pages; none of them may surface through the fallback
+    const ownPages = new Set((await db.select({ id: schema.pages.id }).from(schema.pages).where(eq(schema.pages.vault_id, vaultId))).map((row) => row.id));
+    assert.ok(relaxed.every((r) => ownPages.has(r.id)), 'fallback results stay inside the vault');
+
     // The stored search vector must follow a rename and a tag change (database trigger), for pages
     // with and without chunks
     const [withChunks] = await db.select().from(schema.pages).where(sql`${schema.pages.vault_id} = ${vaultId}::uuid AND ${schema.pages.title} = 'Acme Corp'`);
