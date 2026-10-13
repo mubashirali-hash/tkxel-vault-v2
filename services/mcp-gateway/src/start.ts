@@ -6,8 +6,12 @@ import { Redis } from 'ioredis';
 import { createPostgresToolAuditSink } from './audit/tool-audit.js';
 import { withAnomalyDetection, createPostgresAnomalyBackend } from './audit/anomaly.js';
 import { PostgresOpenVaultStore } from './tools/postgres-store.js';
-import { getUserAccessibleVaults, createOidcVerifierFromEnv, getVaultRateLimits } from '@tkxel-vault/vault-core';
+import { getUserAccessibleVaults, createOidcVerifierFromEnv, getVaultRateLimits, assertProductionConfig } from '@tkxel-vault/vault-core';
 import { RedisRateLimiter, type RateLimiter } from './rate-limiting/index.js';
+
+// A production deployment without a real key service or a chosen search mode stops here (the
+// sign-in provider is checked below, where the token verifier is built)
+assertProductionConfig('MCP gateway', { requireSignIn: true, requireSearchMode: true });
 
 const port = Number(process.env.PORT || 3001);
 const vaultStore = new PostgresOpenVaultStore();

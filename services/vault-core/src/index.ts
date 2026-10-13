@@ -33,3 +33,4 @@ export * from './storage/page-lock.js';
 export * from './schema/migrator.js';
 export * from './schema/link-invariants.js';
 export * from './config/secrets.js';
+export * from './config/production-check.js';

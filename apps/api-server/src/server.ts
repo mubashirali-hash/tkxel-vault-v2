@@ -23,7 +23,7 @@ import {
 } from '@tkxel-vault/vault-core/auth';
 import { saveDraft, publishVersion, getPageContent } from '@tkxel-vault/vault-core/versions';
 import { createKmsProvider, EnvelopeEncryption } from '@tkxel-vault/vault-core/crypto';
-import { movePage, createVault, VaultValidationError, runMigrations, MarkdownChunker, renamePage, PageTitleConflictError, appendTimelineEntry, listTimelineEntries, listPageVersions, rollbackPageToVersion, unpublishPage, getUserAccessibleVaults, exportVaultArchive, ExportNotAllowedError, changeVaultMode, rekeyVault, cryptoShredVault, reindexVault, EmbeddingConfigurationError, createOidcVerifierFromEnv, recordUserGroups, normalizeSharePrincipal, resolveCrossVaultLinks, storeVaultAsset, readVaultAsset, getAssetVaultId, MAX_ASSET_BYTES, getVaultRateLimits, setVaultRateLimits, requestBreakGlass, decideBreakGlass, revokeBreakGlass, listBreakGlassRequests, getConfiguredGlobalOwners, recordAccessDenial, isVaultShredded, LinkGraphIndexer } from '@tkxel-vault/vault-core';
+import { movePage, createVault, VaultValidationError, runMigrations, MarkdownChunker, renamePage, PageTitleConflictError, appendTimelineEntry, listTimelineEntries, listPageVersions, rollbackPageToVersion, unpublishPage, getUserAccessibleVaults, exportVaultArchive, ExportNotAllowedError, changeVaultMode, rekeyVault, cryptoShredVault, reindexVault, EmbeddingConfigurationError, createOidcVerifierFromEnv, recordUserGroups, normalizeSharePrincipal, resolveCrossVaultLinks, storeVaultAsset, readVaultAsset, getAssetVaultId, MAX_ASSET_BYTES, getVaultRateLimits, setVaultRateLimits, requestBreakGlass, decideBreakGlass, revokeBreakGlass, listBreakGlassRequests, getConfiguredGlobalOwners, recordAccessDenial, isVaultShredded, LinkGraphIndexer, assertProductionConfig } from '@tkxel-vault/vault-core';
 import crypto from 'node:crypto';
 import { aiRouter } from './routes/ai.js';
 import { isDevAuthBypassEnabled, getSsoAudience } from './auth/dev-bypass.js';
@@ -2497,6 +2497,9 @@ export { app };
 
 if (process.env.NODE_ENV !== 'test' && process.env.SKIP_SERVER_LISTEN !== 'true') {
   (async () => {
+    // A production deployment without a real key service, a sign-in provider or a chosen search
+    // mode stops here, instead of starting and failing on its first request
+    assertProductionConfig('API server', { requireSignIn: true, requireSearchMode: true });
     try {
       // Deployments that run the migration job set RUN_MIGRATIONS_ON_START=false: there the API
       // connects as a role that cannot change the schema

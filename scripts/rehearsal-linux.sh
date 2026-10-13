@@ -70,7 +70,7 @@ http_body() { in_pod "$NODE_IMAGE" node -e "fetch(process.argv[1]).then(r=>r.tex
 expect_code() { local got; got="$(http_code "$2" "${3:-GET}")"; echo "$2 -> $got (want $1)"; [ "$got" = "$1" ]; }
 
 cleanup_containers() {
-  docker rm -f tkreh-runner tkreh-api tkreh-gateway tkreh-web tkreh-keycloak tkreh-gateway-oauth tkreh-redis tkreh-pg "$POD" >/dev/null 2>&1 || true
+  docker rm -f tkreh-refusal tkreh-runner tkreh-api tkreh-gateway tkreh-web tkreh-keycloak tkreh-gateway-oauth tkreh-redis tkreh-pg "$POD" >/dev/null 2>&1 || true
 }
 start_pod() { # an isolated network namespace shared by every rehearsal container
   cleanup_containers
@@ -137,12 +137,23 @@ if has_stage images; then
 
     STACK_ENV=(-e DATABASE_URL="$APP_URL" -e RUN_MIGRATIONS_ON_START=false -e REDIS_URL=redis://localhost:6379 -e RUNNER_SHARED_SECRET="$RUNNER_SECRET" -e SSO_WEBHOOK_SECRET="$WEBHOOK_SECRET" -e EMBEDDING_PROVIDER=deterministic)
     refuses_production() {
+      local failed=0 code
       for service in skill-runner api-server mcp-gateway; do
-        if timeout 40 docker run --rm --network "container:$POD" "${STACK_ENV[@]}" -e NODE_ENV=production "tkxel-vault/$service:rehearsal" > "$LOGS/refusal_$service.log" 2>&1; then
-          echo "$service started in production mode without KMS, SSO or model configuration"; return 1
+        docker rm -f tkreh-refusal >/dev/null 2>&1 || true
+        timeout -k 5 45 docker run --name tkreh-refusal --network "container:$POD" "${STACK_ENV[@]}" -e NODE_ENV=production "tkxel-vault/$service:rehearsal" > "$LOGS/refusal_$service.log" 2>&1
+        code=$?
+        docker rm -f tkreh-refusal >/dev/null 2>&1 || true
+        # A refusal is the process exiting by itself with an error and saying why. Still running when
+        # the time limit hit (124/137), or exiting cleanly (0), both mean it started.
+        if [ "$code" -eq 0 ] || [ "$code" -eq 124 ] || [ "$code" -eq 137 ]; then
+          echo "== $service STARTED in production mode without key service, sign-in or model settings (exit $code)"; failed=1
+        elif ! grep -qE "FATAL|forbidden|requires|required" "$LOGS/refusal_$service.log"; then
+          echo "== $service exited ($code) without explaining why"; tail -n 5 "$LOGS/refusal_$service.log"; failed=1
+        else
+          echo "== $service refused (exit $code):"; grep -E "FATAL|forbidden|requires|required|must" "$LOGS/refusal_$service.log" | head -n 5
         fi
-        echo "== $service refused:"; grep -E "FATAL|forbidden|requires|required|must" "$LOGS/refusal_$service.log" | head -n 4
       done
+      return $failed
     }
     step "production mode refuses to start without approved KMS, sign-in and model settings" refuses_production
 
