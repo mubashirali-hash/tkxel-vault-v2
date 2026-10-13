@@ -2,6 +2,13 @@
 
 This guide walks you through deploying **tkxel Vault** to your DEMO AWS account using automated Infrastructure-as-Code (CloudFormation) and GitHub Actions CI/CD.
 
+> **Status (2026-10-13): parts of this guide are out of date. Nothing has been deployed with it yet.**
+>
+> - **There is no GitHub Actions pipeline.** `ci.yml` was removed and `deploy-aws.yml` never existed, so section 3 does not apply. The same checks can be run by hand with `scripts/rehearsal-linux.sh`.
+> - **The template serves HTTPS on a domain name.** `infra/cloudformation/tkxel-vault-demo.yml` takes `DomainName` and `AcmeEmail`, opens only ports 80 and 443, and puts everything behind one address (`https://<domain>`, `/api`, `/mcp`). The `http://<PUBLIC_IP>:3000` style addresses below are from an earlier version.
+> - **The template still asks for both model keys** (`ProviderKeysSecretArn`) and deploys `main` by default. The application itself can now run without them: set `EMBEDDING_PROVIDER=none` for keyword search only, and leave the skill runner out (`docker compose up --scale skill-runner=0`). The template has not been updated for that.
+> - **Production start-up is strict.** The API server and the MCP gateway refuse to start without `KMS_PROVIDER=aws` and `AWS_KMS_KEY_ID`, a sign-in provider (`GOOGLE_CLIENT_ID`, or `OIDC_ISSUER` with `OIDC_AUDIENCE`) and an explicit `EMBEDDING_PROVIDER`.
+
 ---
 
 ## 1. Architecture Overview (Option B: Low-Cost Turnkey Stack)
