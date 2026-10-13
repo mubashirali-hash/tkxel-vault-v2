@@ -131,6 +131,24 @@ const safeSkillSummary = (description: string): string => {
   return resemblesInstructions ? 'Protected capability. Instructions and source content remain hidden.' : description;
 };
 
+// Last vault and note of this browser tab. Identifiers only; kept for the tab's lifetime.
+const LAST_PLACE_KEY = 'tkxel_vault_last_place';
+function readLastPlace(): { vaultId?: string; pageId?: string } {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(LAST_PLACE_KEY) || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+function writeLastPlace(place: { vaultId: string; pageId: string }) {
+  try {
+    sessionStorage.setItem(LAST_PLACE_KEY, JSON.stringify(place));
+  } catch {
+    // Storage can be unavailable (private windows); the app simply opens on the first vault then
+  }
+}
+
 export const App: React.FC = () => {
   const [isLoaded, setIsLoaded] = useState(false);
   const [ssoToken, setSsoToken] = useState<string | null>(() => getAuthToken());
@@ -146,6 +164,8 @@ export const App: React.FC = () => {
   } | null>(null);
   const showNotice = (title: string, message: string) => setNotice({ title, message });
   const keyNoticeVaultRef = useRef<string | null>(null);
+  // The note for which a "someone else changed this" notice has already been shown
+  const conflictNoticePageRef = useRef<string | null>(null);
   const requestConfirmation = (request: { title: string; message: string; confirmLabel: string }) =>
     new Promise<boolean>((resolve) => setConfirmation({ ...request, resolve }));
   const settleConfirmation = (confirmed: boolean) => {
@@ -235,7 +255,12 @@ export const App: React.FC = () => {
             }
             setServerVaultRoles(roles);
             setVaults(parsedVaults);
-            setCurrentVault((prev) => parsedVaults.find((pv) => pv.id === prev.id) || parsedVaults[0]);
+            // After a reload, return to the vault the person was in rather than the first in the list
+            const remembered = readLastPlace();
+            setCurrentVault((prev) =>
+              parsedVaults.find((pv) => pv.id === prev.id)
+              || parsedVaults.find((pv) => pv.id === remembered.vaultId)
+              || parsedVaults[0]);
           }
         }
       } catch (err) {
@@ -256,6 +281,11 @@ export const App: React.FC = () => {
   // Local development sign-in as a test user (the field only renders when the dev sign-in is enabled)
   const [devTestUser, setDevTestUser] = useState('');
   const [links, setLinks] = useState<Array<{ from_page_id: string; to_page_id: string }>>(SEED_LINKS);
+  // Remember where the person is, so a reload (or a restore, which reloads) does not lose their place
+  useEffect(() => {
+    if (!ssoToken || !vaultListSettled || !activePageId) return;
+    writeLastPlace({ vaultId: currentVault.id, pageId: activePageId });
+  }, [ssoToken, vaultListSettled, currentVault.id, activePageId]);
   const [lockedSkills, setLockedSkills] = useState<SkillItem[]>(SEED_SKILLS);
   const [timelineEntries, setTimelineEntries] = useState<TimelineEntry[]>(SEED_TIMELINE);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>(SEED_AUDIT);
@@ -366,7 +396,12 @@ export const App: React.FC = () => {
           setLinks([]);
         } else if (savedState.pages && savedState.pages.length > 0) {
           setPages(savedState.pages);
-          setActivePageId(savedState.pages[0].id);
+          // ...and to the note they had open, when it is still in this vault
+          const remembered = readLastPlace();
+          const rememberedPage = remembered.vaultId === currentVault.id
+            ? savedState.pages.find((page: Page) => page.id === remembered.pageId)
+            : undefined;
+          setActivePageId((rememberedPage || savedState.pages[0]).id);
           setLinks(savedState.links || []);
         } else if (currentVault.id === '11111111-1111-1111-1111-111111111111') {
           setPages(SEED_PAGES);
@@ -817,6 +852,22 @@ export const App: React.FC = () => {
             if (pageRes.ok) {
               const resData = await pageRes.json();
               const serverPage = resData.page || resData;
+              // The server refused because the note changed since this editor loaded it. Saving again
+              // with the newer timestamp is only safe when the text on the server is still the text
+              // this editor started from (the timestamps drifted, nobody else wrote). If someone
+              // else's text is there, saving would erase it: keep this editor's text on screen,
+              // do not save, and say so.
+              const sameText = (a: unknown, b: unknown) => String(a ?? '').trim() === String(b ?? '').trim();
+              if (serverPage && !sameText(serverPage.content, activePage.content) && !sameText(serverPage.content, updated.content)) {
+                if (conflictNoticePageRef.current !== activePage.id) {
+                  conflictNoticePageRef.current = activePage.id;
+                  showNotice(
+                    'Someone else changed this note',
+                    'Your changes are still here but have not been saved, so that their work is not overwritten. Copy anything you want to keep, then reload the page to get the latest version.'
+                  );
+                }
+                return false;
+              }
               if (serverPage && serverPage.updated_at) {
                 const refreshedDate = new Date(serverPage.updated_at);
                 setPages((prev) =>

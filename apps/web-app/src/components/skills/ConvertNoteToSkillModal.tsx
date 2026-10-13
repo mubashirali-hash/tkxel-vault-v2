@@ -16,6 +16,14 @@ export interface ConvertNoteToSkillModalProps {
   }) => void;
 }
 
+// The starting example uses the input format the server accepts, so the form saves as it stands
+const DEFAULT_INPUT_SCHEMA = JSON.stringify({
+  inputs: {
+    query: { type: 'string', required: true, description: 'What the skill should work on' },
+    format: { type: 'string', description: 'How the answer should be laid out, for example markdown' },
+  },
+}, null, 2);
+
 export const ConvertNoteToSkillModal: React.FC<ConvertNoteToSkillModalProps> = ({
   isOpen,
   note,
@@ -29,7 +37,7 @@ export const ConvertNoteToSkillModal: React.FC<ConvertNoteToSkillModalProps> = (
   const [description, setDescription] = useState<string>('');
   const [runtime, setRuntime] = useState<string>('Python 3.12 Sandboxed');
   const [instructions, setInstructions] = useState<string>('');
-  const [schemaJson, setSchemaJson] = useState<string>('{\n  "query": "string",\n  "format": "markdown"\n}');
+  const [schemaJson, setSchemaJson] = useState<string>(DEFAULT_INPUT_SCHEMA);
   const [deleteOriginalNote, setDeleteOriginalNote] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const dialogOpen = isOpen && Boolean(note);
@@ -59,7 +67,7 @@ export const ConvertNoteToSkillModal: React.FC<ConvertNoteToSkillModalProps> = (
       if (note.front_matter.tool_schema && typeof note.front_matter.tool_schema === 'string') {
         setSchemaJson(note.front_matter.tool_schema);
       } else {
-        setSchemaJson('{\n  "query": "string",\n  "format": "markdown"\n}');
+        setSchemaJson(DEFAULT_INPUT_SCHEMA);
       }
 
       // 4. Default target vault
