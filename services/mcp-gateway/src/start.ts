@@ -71,18 +71,8 @@ const server = new McpGatewayServer({
   toolAuditSink: withAnomalyDetection(createPostgresToolAuditSink(), createPostgresAnomalyBackend()),
   accessResolver: async (userId: string) => {
     try {
-      const dbAccess = await getUserAccessibleVaults(userId);
-      if (dbAccess.length > 0) {
-        return dbAccess;
-      }
-      // Fallback for dev mode only if explicitly enabled
-      if (process.env.NODE_ENV !== 'production' && process.env.ENABLE_DEV_AUTH_BYPASS === 'true') {
-        return [
-          { vaultId: '11111111-1111-1111-1111-111111111111', mode: 'open', role: 'editor' },
-          { vaultId: '22222222-2222-2222-2222-222222222222', mode: 'locked', role: 'consumer' },
-        ];
-      }
-      return [];
+      // Someone with no vault access gets no tools, in every mode: there is no placeholder access
+      return await getUserAccessibleVaults(userId);
     } catch (err) {
       console.error('Error resolving vault access for user:', userId, err);
       return [];

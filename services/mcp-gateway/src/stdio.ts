@@ -51,13 +51,7 @@ async function runStdioMcpServer() {
     console.error('Error fetching vault access for stdio user:', err);
   }
 
-  // Fallback for dev mode only if explicitly enabled
-  if (userVaults.length === 0 && process.env.NODE_ENV !== 'production' && process.env.ENABLE_DEV_AUTH_BYPASS === 'true') {
-    userVaults = [
-      { vaultId: '11111111-1111-1111-1111-111111111111', mode: 'open', role: 'editor' },
-      { vaultId: '22222222-2222-2222-2222-222222222222', mode: 'locked', role: 'consumer' },
-    ];
-  }
+  // Someone with no vault access gets no tools, in every mode: there is no placeholder access
 
   const policy = new ToolPalettePolicy();
   const authorizedTools = policy.computeAuthorizedTools(userVaults as any);
