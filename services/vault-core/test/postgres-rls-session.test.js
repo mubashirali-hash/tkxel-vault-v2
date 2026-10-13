@@ -11,6 +11,49 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/**
+ * Splits a SQL script into statements at top-level semicolons. Text inside dollar-quoted bodies
+ * (function definitions, DO blocks) and line comments is left alone.
+ */
+function splitSqlStatements(script) {
+  const statements = [];
+  let current = '';
+  let dollarTag = null;
+  const lines = script.split('\n');
+  for (const line of lines) {
+    const code = dollarTag ? line : line.replace(/--.*$/, '');
+    let rest = code;
+    let buffer = '';
+    while (rest.length > 0) {
+      if (dollarTag) {
+        const close = rest.indexOf(dollarTag);
+        if (close === -1) { buffer += rest; rest = ''; break; }
+        buffer += rest.slice(0, close + dollarTag.length);
+        rest = rest.slice(close + dollarTag.length);
+        dollarTag = null;
+        continue;
+      }
+      const open = rest.match(/\$[A-Za-z_]*\$/);
+      const semicolon = rest.indexOf(';');
+      if (open && (semicolon === -1 || open.index < semicolon)) {
+        buffer += rest.slice(0, open.index + open[0].length);
+        rest = rest.slice(open.index + open[0].length);
+        dollarTag = open[0];
+        continue;
+      }
+      if (semicolon === -1) { buffer += rest; rest = ''; break; }
+      current += buffer + rest.slice(0, semicolon);
+      if (current.trim()) statements.push(current.trim());
+      current = '';
+      buffer = '';
+      rest = rest.slice(semicolon + 1);
+    }
+    current += buffer + '\n';
+  }
+  if (current.trim()) statements.push(current.trim());
+  return statements;
+}
+
 test('PostgreSQL RLS Defense-in-Depth: Session context strictly filters rows at SQL engine level', async () => {
   const aliceId = 'alice.rls@example.com';
   const bobId = 'bob.rls@example.com';
@@ -79,20 +122,22 @@ test('PostgreSQL RLS Defense-in-Depth: Session context strictly filters rows at 
     const hasPolicy = await db.execute(sql`SELECT 1 FROM pg_policies WHERE policyname = 'pages_select'`);
     if (hasPolicy.rows.length === 0) {
       const rlsSql = fs.readFileSync(path.resolve(__dirname, '../src/schema/rls.sql'), 'utf-8');
-      // Enabling row-level security takes an exclusive lock on each table. Other test files use the
-      // same tables at the same time, so PostgreSQL may pick this statement as a deadlock victim and
-      // roll it back whole. Retrying is the documented handling; nothing about the checks changes.
-      for (let attempt = 1; ; attempt++) {
-        try {
-          await db.execute(sql.raw(rlsSql));
-          break;
-        } catch (error) {
-          const code = error?.cause?.code ?? error?.code;
-          if (code !== '40P01' || attempt >= 8) throw error;
-          await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
-          // Another test file may have applied the policies while this one was waiting
-          const applied = await db.execute(sql`SELECT 1 FROM pg_policies WHERE policyname = 'pages_select'`);
-          if (applied.rows.length > 0) break;
+      // Enabling row-level security takes an exclusive lock on each table, and other test files use
+      // the same tables at the same time. Run as one transaction, the script holds one table while
+      // waiting for the next, which can deadlock and get either side rolled back. Run one statement
+      // at a time, it never holds a lock while waiting for another, so no deadlock can involve it.
+      for (const statement of splitSqlStatements(rlsSql)) {
+        for (let attempt = 1; ; attempt++) {
+          try {
+            await db.execute(sql.raw(statement));
+            break;
+          } catch (error) {
+            const code = error?.cause?.code ?? error?.code;
+            // 42710: another test file created this policy first, which is the state wanted
+            if (code === '42710') break;
+            if ((code !== '40P01' && code !== '55P03') || attempt >= 8) throw error;
+            await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+          }
         }
       }
     }
